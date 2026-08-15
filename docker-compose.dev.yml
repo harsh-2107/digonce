@@ -40,12 +40,19 @@ services:
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     ports:
-      - "3001:80"
+      - "5173:5173"
     depends_on:
       backend:
         condition: service_healthy
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+    environment:
+      VITE_API_URL: http://localhost:8001
+      VITE_PROXY_TARGET: http://backend:8000
 
 volumes:
   db_data:

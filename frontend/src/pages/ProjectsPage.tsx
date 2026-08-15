@@ -1,0 +1,7 @@
+import { CalendarDays, MapPin, Plus } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { useAuth } from '@/context/AuthContext'
+import { useProjects } from '@/context/ProjectsContext'
+import { TopNav } from '@/components/TopNav'
+import '@/App.css'
+export function ProjectsPage() { const { user } = useAuth(); const { projects } = useProjects(); if (!user) return null; const visible = user.department === 'super-admin' ? projects : projects.filter(project => project.department === user.department); return <main className="app-page"><TopNav/><section className="page-content"><div className="page-header"><div><p className="eyebrow">PLANNED WORKS</p><h1>Projects</h1><p className="page-intro">Upcoming infrastructure work managed by {user.department === 'super-admin' ? 'all departments' : 'your department'}.</p></div><Link className="page-create" to="/projects/new"><Plus size={17}/> Create project</Link></div><div className="project-list">{visible.length ? visible.map(project => <article className="project-card" key={project.id}><div className="project-code">{project.id}</div><div className="project-body"><div><h3>{project.title}</h3><p>{project.description}</p></div><div className="project-meta"><span><MapPin size={14}/>{project.location}</span><span><CalendarDays size={14}/>{project.startDate} → {project.endDate}</span></div></div><span className="status-pill">{project.status.replace('-', ' ')}</span></article>) : <div className="empty-state">No projects have been created for your department yet.</div>}</div></section></main> }
