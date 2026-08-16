@@ -17,31 +17,53 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 // API base URL - uses relative path for API calls via proxy
-const API_BASE = import.meta.env.PROD ? '/api' : 'http://localhost:8001';
+export const API_BASE = import.meta.env.PROD
+  ? "/api"
+  : (import.meta.env.VITE_API_URL ?? "http://localhost:8001");
+export function authHeaders(): Record<string, string> {
+  const token = sessionStorage.getItem("dig-once-token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(() => {
     const saved = sessionStorage.getItem("dig-once-user");
-    return saved ? JSON.parse(saved) : null;
+    const token = sessionStorage.getItem("dig-once-token");
+    if (!saved || !token) {
+      sessionStorage.removeItem("dig-once-user");
+      sessionStorage.removeItem("dig-once-token");
+      return null;
+    }
+    try {
+      return JSON.parse(saved) as User;
+    } catch {
+      sessionStorage.removeItem("dig-once-user");
+      sessionStorage.removeItem("dig-once-token");
+      return null;
+    }
   });
 
   async function login(email: string, password: string) {
     try {
       const response = await fetch(`${API_BASE}/auth/login`, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({ email, password }),
       });
 
       if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.detail || 'Login failed');
+        throw new Error(error.detail || "Login failed");
       }
 
-      const userData = await response.json();
+      const loginData = await response.json();
+      if (!loginData.access_token || !loginData.user)
+        throw new Error("Login response was incomplete.");
+      const userData = loginData.user as User;
       sessionStorage.setItem("dig-once-user", JSON.stringify(userData));
+      sessionStorage.setItem("dig-once-token", loginData.access_token);
       setUser(userData);
     } catch (error) {
       if (error instanceof Error) {
@@ -53,6 +75,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   function logout() {
     sessionStorage.removeItem("dig-once-user");
+    sessionStorage.removeItem("dig-once-token");
     setUser(null);
   }
   return (

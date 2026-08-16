@@ -1,263 +1,791 @@
-# Dig Once Nagpur — Detailed Implementation Plan
+# Dig Once Nagpur — Implementation Plan (5-Underground-Network Version)
 
-## Document purpose
+## 1. Scope Freeze
 
-This document converts the current **Dig Once Nagpur** concept, the mentor's recommended upgrades, and the current repository baseline into a phased implementation plan.
+The current prototype has exactly **five underground infrastructure network types**:
 
-The goal is not to build a collection of disconnected features. The project must evolve through **vertical, demoable increments**:
+1. Water Supply
+2. Sewage
+3. Drainage
+4. Natural Gas
+5. Fibre Network
 
-> At the end of every phase, Dig Once Nagpur is a complete working application.  
-> The next phase upgrades the same application with deeper intelligence, stronger workflows, better real-world readiness, and a stronger hackathon demo.
+These are the only underground-network layers that the implementation should model in the hackathon prototype. Do **not** add Electrical, Telecom beyond Fibre, or other utility types unless the dataset is actually added later.
 
-The core proposition remains:
+The application may still contain a **road network** because every excavation needs to be associated with a road/corridor, but roads are a separate civic GIS entity, not one of the five underground network layers.
 
-> **GIS + Conflict Detection + Automated Coordination + Excavation Permission + Joint Project Planning + Field Verification + Decision Intelligence**
+The product remains:
 
-The product should be positioned as a **coordination intelligence layer on top of municipal GIS/infrastructure data**, rather than merely another GIS viewer.
+> **Dig Once Nagpur — an excavation-permission and cross-department coordination system that checks five underground infrastructure networks before a road is opened.**
 
-The product principle is:
+Core principle:
 
 > **Before a road is opened, know who else needs to open it.**
 
 ---
 
-# 1. Current baseline
+# 2. Product Roles
 
-The repository already has a useful foundation.
+## 2.1 Super Admin / NMC City Admin
 
-The current repository contains:
+Has city-wide visibility and can:
 
-- React frontend
-- FastAPI backend
-- PostgreSQL/PostGIS setup
-- Docker/Docker Compose
-- synthetic GIS GeoJSON files for drainage, fibre, natural gas, sewage, and water
-- a GIS import script
-- an initial GIS SQL migration
-- a `/gis/geojson` endpoint
-- demo department users
+- see all five networks
+- see all projects and excavation requests
+- manage departments/users
+- approve or reject excavation requests according to workflow
+- view city-wide conflicts
+- view coordination opportunities
+- configure thresholds and scoring policies
+- view audit logs
+- manage imported/verified GIS data
 
-The backend currently has:
+## 2.2 Department Admin
 
-- `/auth/login`
-- `/auth/demo-accounts`
-- `/health`
-- `/db-version`
-- `/gis/geojson`
-
-and the GIS endpoint supports utility-type and bounding-box filtering.
-
-The current GIS database migration creates `underground_networks` with:
-
-- `utility_type`
-- `properties`
-- `geometry(LineString, 4326)`
-
-and a GiST spatial index.
-
-This means **we should not restart the project**.
-
-Instead, the current GIS foundation becomes Phase 0 of the product roadmap.
-
----
-
-# 2. Target product architecture
-
-The target system should evolve toward:
+There are five primary department types matching the five network layers:
 
 ```text
-                         DIG ONCE NAGPUR
-                                |
-        --------------------------------------------------
-        |                       |                        |
-   GIS FOUNDATION         PROJECT LIFECYCLE       COORDINATION
-        |                       |                        |
-   Roads                  Excavation Requests     Conflict Detection
-   Utilities              Project Scheduling      Risk Scoring
-   Road History            Costs                    Compatibility
-   Work Zones              Contractors              Optimization
-        |                       |                        |
-        ----------------------- | ------------------------
-                                |
-                       EXCAVATION DECISION
-                                |
-                 --------------------------------
-                 |              |               |
-             Permission     Coordination      Proceed
-                 |              |               |
-                 --------------------------------
-                                |
-                        Notifications
-                                |
-                    Cross-Department Workflow
-                                |
-                       Joint Project Plan
-                                |
-                        Field Verification
-                                |
-                           Execution
-                                |
-                       Restoration / Closure
-                                |
-                         Audit + Analytics
-                                |
-                         AI COPILOT LAYER
+Water Supply
+Sewage
+Drainage
+Natural Gas
+Fibre Network
 ```
 
-### Important architectural rule
+A Department Admin can:
 
-The system must **not** allow an LLM to make raw GIS decisions.
+- view the full city map
+- view all five networks
+- edit only their own network data
+- create and manage their own projects
+- submit excavation requests for their projects
+- receive notifications when another project affects their network/corridor
+- review coordination requests involving their projects
+- accept, reject, or request modification of proposed coordination
 
-Use:
+## 2.3 Department Engineer
+
+Can:
+
+- inspect GIS data
+- create project drafts
+- perform conflict review
+- submit field observations
+- participate in coordination
+
+Cannot perform final administrative approvals unless explicitly granted.
+
+## 2.4 Field Engineer
+
+Can:
+
+- view assigned work
+- capture GPS position
+- upload photos
+- verify utility position/depth
+- report discrepancies
+- submit field verification
+
+## 2.5 Department Viewer
+
+Read-only access to authorized departmental/project information.
+
+---
+
+# 3. Product Structure
+
+The application should be organized around five major workflows:
 
 ```text
-PostGIS
-+
-deterministic rules
-+
-scoring / optimization
+1. VIEW INFRASTRUCTURE
         |
-        v
-candidate recommendations
+2. PLAN PROJECT
         |
-        v
-AI
+3. REQUEST EXCAVATION
         |
-        v
-explanation / prioritization / communication
+4. DETECT + COORDINATE CONFLICTS
+        |
+5. EXECUTE + VERIFY + ANALYZE
 ```
 
-The GIS engine decides whether two projects are spatially or temporally related. AI explains and assists with the decision.
+The map is the central interface, but the product is the decision workflow around excavation.
 
 ---
 
-# 3. The nine-phase product roadmap
+# 4. Main Pages
 
-| Phase | Product state | Main outcome |
-|---|---|---|
-| 0 | GIS Foundation | Stable municipal map and data foundation |
-| 1 | Project Planning | Departments can create and manage planned works |
-| 2 | Automatic Conflict Detection | Every proposed excavation is automatically checked |
-| 3 | Excavation Permission | Conflict-aware digital excavation request and approval workflow |
-| 4 | Joint Project Coordination | System groups compatible projects and proposes a shared execution window |
-| 5 | Risk & Impact Intelligence | Severity, road risk, cost and disruption intelligence |
-| 6 | AI Coordination Copilot | Explain conflicts, recommend actions, assist officers |
-| 7 | Field Verification & Data Improvement | GPS/photo verification and continuous GIS improvement |
-| 8 | City Command Center | City-wide analytics, auditability and executive decision support |
-| 9 | Competition Hardening | Reliability, demo perfection, benchmark scenario and pitch |
+## Page 1 — Login
 
-Every phase is described below with objective, product behavior, database work, backend work, frontend work, algorithms, APIs, testing, demo value, and exit criteria.
-
----
-
-# PHASE 0 — GIS FOUNDATION
-
-## Objective
-
-Turn the existing repository into a clean, reliable, extensible GIS application.
-
-The product at the end of Phase 0 should answer:
-
-> **What infrastructure exists at this location?**
-
-It must already feel like a real municipal application.
-
----
-
-## 0.1 Freeze the domain vocabulary
-
-Do this before adding tables.
-
-### Departments
-
-Initial synthetic departments:
-
-- Water
-- Sewerage
-- Drainage/Stormwater
-- Electrical
-- Fibre/Telecom
-- Natural Gas
-- Roads
-- City/NMC administration
-
-### Infrastructure types
-
-At minimum:
-
-- road
-- water
-- sewage
-- drainage
-- electrical
-- fibre
-- natural gas
-
-### Project types
-
-- new installation
-- replacement
-- repair
-- maintenance
-- rehabilitation
-- resurfacing
-- emergency repair
-
-### Project statuses
-
-Use this lifecycle from the start:
+Route:
 
 ```text
-DRAFT
-SUBMITTED
-UNDER_REVIEW
-COORDINATION_REQUIRED
-APPROVED
-SCHEDULED
-IN_PROGRESS
-RESTORATION
-VERIFICATION
-COMPLETED
-REJECTED
-CANCELLED
+/login
 ```
 
-Do not keep the current application forever limited to `Pending / In Progress / Completed`.
+Elements:
+
+- Email
+- Password
+- Login
+- optional demo-account selector for hackathon mode
+
+After login, redirect based on role.
 
 ---
 
-# 0.2 Database redesign
+# Page 2 — City / Department Dashboard
 
-The existing `underground_networks` table is useful for the initial prototype but is too generic for the final product.
+Route:
 
-Keep the current table temporarily for migration compatibility.
+```text
+/dashboard
+```
 
-Introduce these entities.
+For Department Admin, show:
 
-### `departments`
+```text
+My Active Projects
+Pending Excavation Requests
+Open Conflicts
+Coordination Requests
+High-Risk Alerts
+```
+
+For City Admin, show:
+
+```text
+Active Projects
+Open Excavation Requests
+High-Risk Conflicts
+Coordination Opportunities
+Excavations Potentially Avoided
+Estimated Savings
+```
+
+The dashboard should contain a compact map preview and action cards.
+
+---
+
+# Page 3 — Infrastructure Map
+
+Route:
+
+```text
+/map
+```
+
+This is the primary page.
+
+## Layer control
+
+Exactly these five underground layers:
+
+```text
+● Water Supply
+● Sewage
+● Drainage
+● Natural Gas
+● Fibre Network
+```
+
+Also provide separate civic overlays:
+
+```text
+○ Roads
+○ Planned Projects
+○ Active Projects
+○ Excavation Requests
+○ Conflict Areas
+○ Coordination Opportunities
+```
+
+The five network types use the existing conceptual display shown in the prototype:
+
+- Water Supply — 29 loaded
+- Sewage — 50 loaded
+- Drainage — 78 loaded
+- Natural Gas — 77 loaded
+- Fibre Network — 122 loaded
+
+These counts should remain dynamic and come from the backend, not be hard-coded.
+
+---
+
+# Page 4 — Network Details
+
+Clicking a network segment opens a detail panel.
+
+Example for Water:
+
+```text
+Water Supply
+
+Network ID: W-00124
+Department: Water Supply
+
+Diameter: 600 mm
+Depth: 2.1 m
+Material: DI
+Condition: Good
+Installed: 2020
+
+Data Source: GIS Import
+Confidence: Verified
+Last Verified: 14 Aug 2026
+```
+
+Not every attribute must exist for every network. Display only available fields.
+
+## Common attributes
+
+All five types should support:
 
 ```text
 id
-name
-code
-description
-active
-created_at
-updated_at
+department
+utility_type
+geometry
+condition
+criticality
+source_type
+confidence_level
+last_verified_at
+metadata
 ```
 
-### `users`
+Network-specific values belong in a structured metadata field initially.
+
+---
+
+# Page 5 — Project List
+
+Route:
 
 ```text
-id
-department_id
-name
-email
-password_hash
-role
-active
-created_at
-updated_at
+/projects
+```
+
+Filters:
+
+```text
+Department
+Project type
+Status
+Priority
+Start date
+End date
+Road
+```
+
+Columns:
+
+```text
+Project Code
+Project Name
+Department
+Road / Area
+Start
+End
+Status
+Risk
+Coordination
+```
+
+---
+
+# Page 6 — Create Project
+
+Route:
+
+```text
+/projects/new
+```
+
+This should be a **four-step map-first flow**.
+
+## Step 1 — Project Information
+
+```text
+Project Name
+Project Type
+Description
+Priority
+Department
+```
+
+Project types:
+
+```text
+Repair
+Replacement
+New Installation
+Maintenance
+Rehabilitation
+Emergency Repair
+```
+
+## Step 2 — Schedule
+
+```text
+Planned Start
+Planned End
+Minimum Required Duration
+```
+
+## Step 3 — Work Parameters
+
+```text
+Excavation Width
+Excavation Depth
+Estimated Cost
+Excavation Cost
+Restoration Cost
+Traffic Management Cost
+Contractor
+```
+
+## Step 4 — Location
+
+User draws the planned work corridor on the map.
+
+The frontend saves a `LINESTRING`.
+
+Backend creates a derived excavation footprint using the excavation width.
+
+```text
+Project centerline
+        |
+        v
+buffer by width/2
+        |
+        v
+Excavation Polygon
+```
+
+The frontend must not be trusted for the final footprint calculation. The backend recalculates it.
+
+---
+
+# Page 7 — Project Details
+
+Route:
+
+```text
+/projects/:id
+```
+
+Sections:
+
+### Summary
+
+```text
+Project Code
+Department
+Type
+Priority
+Status
+
+Start
+End
+
+Estimated Cost
+```
+
+### Map
+
+Show:
+
+- project corridor
+- excavation footprint
+- all five underground networks
+- nearby projects
+- road segment
+- conflict markers
+
+### Analysis
+
+Show:
+
+```text
+Utilities affected
+Nearby projects
+Schedule conflicts
+Road risk
+Overall severity
+Coordination opportunity
+```
+
+### Timeline
+
+Show:
+
+```text
+Created
+Submitted
+Analyzed
+Coordination Requested
+Approved
+Scheduled
+In Progress
+Restoration
+Verified
+Completed
+```
+
+### Audit
+
+Who changed what and when.
+
+---
+
+# Page 8 — Excavation Request
+
+Route:
+
+```text
+/excavation-requests/new?project_id=<id>
+```
+
+This is a separate workflow from project creation.
+
+The distinction is:
+
+> Project = what work the department plans.
+>
+> Excavation Request = permission to physically open the road.
+
+The request automatically triggers conflict analysis.
+
+Fields:
+
+```text
+Project
+Requested Start
+Requested End
+Excavation Area
+Justification
+Emergency?
+Supporting Documents
+```
+
+---
+
+# Page 9 — Excavation Request Review
+
+Route:
+
+```text
+/excavation-requests/:id
+```
+
+The reviewer sees:
+
+```text
+EXCAVATION REQUEST ER-1042
+
+Project: Water Pipeline Replacement
+Road: Central Avenue
+
+10–20 Sep
+
+Risk: HIGH
+
+Underground network conflicts:
+2
+
+Other projects nearby:
+3
+
+Coordination opportunity:
+YES
+```
+
+Actions:
+
+```text
+Approve
+Reject
+Request Changes
+Send for Coordination
+```
+
+For high-risk requests, the coordination state should be visible before approval.
+
+---
+
+# Page 10 — Conflicts
+
+Route:
+
+```text
+/conflicts
+```
+
+Filters:
+
+```text
+Severity
+Network Type
+Department
+Project
+Status
+Date
+```
+
+Conflict cards:
+
+```text
+HIGH
+Water Supply conflict
+Distance: 1.6m
+Project: W-104
+
+MEDIUM
+Sewage project overlap
+Temporal overlap: 5 days
+
+HIGH
+Natural Gas conflict
+Critical utility
+```
+
+Clicking a conflict should zoom to its map location.
+
+---
+
+# Page 11 — Coordination Opportunities
+
+Route:
+
+```text
+/coordination
+```
+
+Show:
+
+```text
+Central Avenue
+4 projects
+3 network types involved
+
+Opportunity Score: 91/100
+Suggested Window: 17–20 Sep
+Potential Excavations: 3 -> 1
+```
+
+Opening a coordination opportunity shows all participating projects and their departments.
+
+---
+
+# Page 12 — Coordination Detail
+
+Route:
+
+```text
+/coordination/:id
+```
+
+Sections:
+
+```text
+Projects
+Spatial overlap
+Schedule overlap
+Network conflicts
+Compatibility
+Recommended execution window
+Estimated savings
+Estimated disruption reduction
+Department responses
+AI explanation
+```
+
+Actions:
+
+```text
+Send Proposal
+Accept
+Reject
+Request Modification
+Recalculate
+```
+
+---
+
+# Page 13 — Notifications
+
+Route:
+
+```text
+/notifications
+```
+
+Notification types:
+
+```text
+New Conflict
+Excavation Request
+Coordination Request
+Approval Required
+Road Protection Warning
+Field Verification Required
+Coordination Accepted
+Coordination Rejected
+```
+
+Every relevant notification must be actionable.
+
+Example:
+
+```text
+Coordination Request
+
+Water project W-104 overlaps your Fibre project F-32.
+
+Shared corridor: 420m
+Schedule overlap: 4 days
+Score: 87
+
+[Review]
+```
+
+---
+
+# Page 14 — Field Verification
+
+Route:
+
+```text
+/field
+/field/:projectId
+```
+
+Mobile-friendly screen.
+
+Actions:
+
+```text
+Capture GPS
+Take Photo
+Add Depth
+Select Network
+Add Observation
+Submit Verification
+```
+
+Comparison view:
+
+```text
+GIS Location
+vs
+Observed Location
+```
+
+If different:
+
+```text
+Create Data Discrepancy
+```
+
+---
+
+# Page 15 — Analytics / Command Center
+
+Route:
+
+```text
+/analytics
+```
+
+Show:
+
+```text
+Active Projects
+Open Excavation Requests
+High-Risk Conflicts
+Coordination Opportunities
+Excavations Avoided
+Potential Savings
+Road Opening Days Reduced
+```
+
+Maps:
+
+```text
+Conflict Heatmap
+Repeated Excavation Hotspots
+Upcoming Work Density
+Coordination Opportunities
+```
+
+---
+
+# Page 16 — Admin
+
+Route:
+
+```text
+/admin
+```
+
+Sections:
+
+```text
+Departments
+Users
+Policies
+Conflict Thresholds
+Utility Rules
+Audit Logs
+GIS Data Management
+```
+
+---
+
+# 5. Database Schema
+
+## 5.1 Departments
+
+```sql
+CREATE TABLE departments (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    code TEXT NOT NULL UNIQUE,
+    description TEXT,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+Seed exactly these infrastructure departments:
+
+```text
+water
+sewage
+drainage
+natural-gas
+fibre
+```
+
+A separate `nmc-admin`/city-admin role can exist without pretending there is an underground layer for it.
+
+---
+
+# 5.2 Users
+
+```sql
+CREATE TABLE users (
+    id BIGSERIAL PRIMARY KEY,
+    department_id BIGINT REFERENCES departments(id),
+    name TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 ```
 
 Roles:
@@ -270,470 +798,402 @@ DEPARTMENT_VIEWER
 FIELD_ENGINEER
 ```
 
-### `roads`
-
-```text
-id
-name
-road_code
-geometry
-road_class
-traffic_level
-condition
-last_resurfaced_at
-last_excavated_at
-last_restored_at
-protection_until
-criticality
-metadata
-created_at
-updated_at
-```
-
-### `utilities`
-
-```text
-id
-department_id
-utility_type
-geometry
-depth_m
-width_m
-diameter_mm
-material
-installation_year
-condition
-criticality
-source_type
-confidence_level
-verified_at
-verified_by
-metadata
-created_at
-updated_at
-```
-
-### `projects`
-
-```text
-id
-project_code
-department_id
-title
-description
-project_type
-priority
-status
-geometry
-start_date
-end_date
-estimated_cost
-excavation_cost
-restoration_cost
-traffic_management_cost
-excavation_width_m
-excavation_depth_m
-contractor_id
-created_by
-created_at
-updated_at
-```
-
-### `audit_logs`
-
-```text
-id
-user_id
-action
-entity_type
-entity_id
-old_value
-new_value
-created_at
-```
-
 ---
 
-# 0.3 Geometry rules
+# 5.3 Underground Networks
 
-Use:
+The existing `underground_networks` concept remains useful.
 
-- roads -> `LINESTRING`
-- utility lines -> `LINESTRING`
-- project corridor -> `LINESTRING`
-- excavation footprint -> `POLYGON`
-- work zones -> `POLYGON`
-- field observations -> `POINT`
+However, normalize the department ownership and common attributes.
 
-Do not store everything as a point.
+Recommended:
+
+```sql
+CREATE TABLE utilities (
+    id BIGSERIAL PRIMARY KEY,
+    department_id BIGINT NOT NULL REFERENCES departments(id),
+    utility_type TEXT NOT NULL CHECK (
+        utility_type IN (
+            'water',
+            'sewage',
+            'drainage',
+            'natural-gas',
+            'fibre'
+        )
+    ),
+    geometry geometry(LineString, 4326) NOT NULL,
+    depth_m NUMERIC,
+    width_m NUMERIC,
+    diameter_mm NUMERIC,
+    material TEXT,
+    installation_year INTEGER,
+    condition TEXT,
+    criticality SMALLINT CHECK (criticality BETWEEN 1 AND 5),
+    source_type TEXT,
+    confidence_level TEXT,
+    verified_at TIMESTAMPTZ,
+    verified_by BIGINT REFERENCES users(id),
+    metadata JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+### Why `metadata`?
+
+The five networks do not necessarily share identical physical attributes.
 
 For example:
 
 ```text
-Project line
-     |
-     v
-buffer by excavation width
-     |
-     v
-excavation polygon
+Water -> diameter/material/depth
+Sewage -> diameter/material/depth
+Drainage -> channel/diameter/depth
+Natural Gas -> diameter/pressure/material/depth
+Fibre -> cable count/type/depth
 ```
 
-This becomes important for conflict detection.
+Keep universal fields normalized and network-specific fields in `metadata` until the prototype proves that they need dedicated columns.
 
 ---
 
-# 0.4 Spatial indexes
+# 5.4 Roads
 
-Create GiST indexes on every geometry column.
-
-Examples:
+Roads are not one of the five underground networks. They are the physical surface through which excavation happens.
 
 ```sql
-CREATE INDEX roads_geometry_gix
-ON roads USING GIST (geometry);
-
-CREATE INDEX utilities_geometry_gix
-ON utilities USING GIST (geometry);
-
-CREATE INDEX projects_geometry_gix
-ON projects USING GIST (geometry);
+CREATE TABLE roads (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    road_code TEXT UNIQUE,
+    geometry geometry(LineString, 4326) NOT NULL,
+    road_class TEXT,
+    traffic_level TEXT,
+    condition TEXT,
+    criticality SMALLINT CHECK (criticality BETWEEN 1 AND 5),
+    last_resurfaced_at TIMESTAMPTZ,
+    last_excavated_at TIMESTAMPTZ,
+    last_restored_at TIMESTAMPTZ,
+    protection_until TIMESTAMPTZ,
+    metadata JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 ```
 
-Also add indexes for:
-
-- department
-- status
-- start_date
-- end_date
-- utility_type
+If real road geometry is not available in the current dataset, generate/load a synthetic road layer specifically for project corridors and demo scenarios. Do not label synthetic roads as official NMC data.
 
 ---
 
-# 0.5 GIS API foundation
+# 5.5 Projects
 
-Keep the current `/gis/geojson` endpoint but refactor it into a proper GIS module.
-
-Recommended:
-
-```text
-GET /gis/layers
-GET /gis/roads
-GET /gis/utilities
-GET /gis/projects
-GET /gis/geojson
+```sql
+CREATE TABLE projects (
+    id BIGSERIAL PRIMARY KEY,
+    project_code TEXT NOT NULL UNIQUE,
+    department_id BIGINT NOT NULL REFERENCES departments(id),
+    title TEXT NOT NULL,
+    description TEXT,
+    project_type TEXT NOT NULL,
+    priority TEXT NOT NULL DEFAULT 'MEDIUM',
+    status TEXT NOT NULL DEFAULT 'DRAFT',
+    geometry geometry(LineString, 4326) NOT NULL,
+    excavation_geometry geometry(Polygon, 4326),
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    minimum_duration_days INTEGER,
+    estimated_cost NUMERIC(14,2),
+    excavation_cost NUMERIC(14,2),
+    restoration_cost NUMERIC(14,2),
+    traffic_management_cost NUMERIC(14,2),
+    excavation_width_m NUMERIC,
+    excavation_depth_m NUMERIC,
+    contractor_name TEXT,
+    created_by BIGINT NOT NULL REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 ```
-
-Do not return every geometry in the city on every request forever.
-
-Support:
-
-```text
-bbox
-type
-department
-status
-date range
-```
-
-Later, add vector tiles if performance demands it.
 
 ---
 
-# 0.6 Synthetic Nagpur dataset
+# 5.6 Project-Road association
 
-Keep the current GeoJSON assets as source data, then enrich them.
+A project can cross more than one road.
 
-Synthetic data must be **plausible rather than random**.
+Use a bridge table rather than storing one `road_id`.
+
+```sql
+CREATE TABLE project_roads (
+    project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    road_id BIGINT NOT NULL REFERENCES roads(id),
+    overlap_length_m NUMERIC,
+    PRIMARY KEY (project_id, road_id)
+);
+```
+
+This becomes important for corridors.
+
+---
+
+# 5.7 Excavation Requests
+
+```sql
+CREATE TABLE excavation_requests (
+    id BIGSERIAL PRIMARY KEY,
+    request_code TEXT NOT NULL UNIQUE,
+    project_id BIGINT NOT NULL REFERENCES projects(id),
+    requested_start DATE NOT NULL,
+    requested_end DATE NOT NULL,
+    requested_area geometry(Polygon, 4326),
+    justification TEXT NOT NULL,
+    emergency BOOLEAN NOT NULL DEFAULT FALSE,
+    status TEXT NOT NULL DEFAULT 'DRAFT',
+    submitted_by BIGINT NOT NULL REFERENCES users(id),
+    reviewed_by BIGINT REFERENCES users(id),
+    reviewed_at TIMESTAMPTZ,
+    decision_reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+---
+
+# 5.8 Conflicts
+
+One project can conflict with:
+
+- any of the five network types
+- another project
+- a road condition
+
+Use a flexible conflict record.
+
+```sql
+CREATE TABLE project_conflicts (
+    id BIGSERIAL PRIMARY KEY,
+    project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    other_project_id BIGINT REFERENCES projects(id) ON DELETE CASCADE,
+    utility_id BIGINT REFERENCES utilities(id),
+    road_id BIGINT REFERENCES roads(id),
+    conflict_type TEXT NOT NULL,
+    distance_m NUMERIC,
+    overlap_m NUMERIC,
+    temporal_overlap_days INTEGER,
+    schedule_gap_days INTEGER,
+    depth_difference_m NUMERIC,
+    severity TEXT,
+    score NUMERIC(5,2),
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'OPEN',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+Conflict types:
+
+```text
+UTILITY_PROXIMITY
+UTILITY_OVERLAP
+PROJECT_SPATIAL_OVERLAP
+PROJECT_TEMPORAL_OVERLAP
+ROAD_RECENTLY_RESTORED
+ROAD_HIGH_TRAFFIC
+ROAD_FREQUENT_EXCAVATION
+```
+
+---
+
+# 5.9 Coordination Groups
+
+```sql
+CREATE TABLE coordination_groups (
+    id BIGSERIAL PRIMARY KEY,
+    corridor_geometry geometry(LineString, 4326),
+    recommended_start DATE,
+    recommended_end DATE,
+    coordination_type TEXT,
+    score NUMERIC(5,2),
+    estimated_savings NUMERIC(14,2),
+    estimated_disruption_reduction NUMERIC(7,2),
+    status TEXT NOT NULL DEFAULT 'PROPOSED',
+    created_by BIGINT REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+Membership:
+
+```sql
+CREATE TABLE coordination_group_projects (
+    group_id BIGINT NOT NULL REFERENCES coordination_groups(id) ON DELETE CASCADE,
+    project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    response_status TEXT NOT NULL DEFAULT 'PENDING',
+    response_reason TEXT,
+    responded_by BIGINT REFERENCES users(id),
+    responded_at TIMESTAMPTZ,
+    PRIMARY KEY (group_id, project_id)
+);
+```
+
+---
+
+# 5.10 Notifications
+
+```sql
+CREATE TABLE notifications (
+    id BIGSERIAL PRIMARY KEY,
+    recipient_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type TEXT NOT NULL,
+    severity TEXT,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    project_id BIGINT REFERENCES projects(id),
+    related_project_id BIGINT REFERENCES projects(id),
+    coordination_group_id BIGINT REFERENCES coordination_groups(id),
+    action_required BOOLEAN NOT NULL DEFAULT FALSE,
+    read_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+---
+
+# 5.11 Field Verification
+
+```sql
+CREATE TABLE field_verifications (
+    id BIGSERIAL PRIMARY KEY,
+    project_id BIGINT REFERENCES projects(id),
+    utility_id BIGINT REFERENCES utilities(id),
+    engineer_id BIGINT NOT NULL REFERENCES users(id),
+    gps_point geometry(Point, 4326) NOT NULL,
+    observed_geometry geometry(LineString, 4326),
+    observation_type TEXT NOT NULL,
+    measured_depth_m NUMERIC,
+    notes TEXT,
+    verification_status TEXT NOT NULL DEFAULT 'PENDING',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+Photos should be stored in object storage.
 
 Create:
 
+```sql
+CREATE TABLE field_verification_files (
+    id BIGSERIAL PRIMARY KEY,
+    verification_id BIGINT NOT NULL REFERENCES field_verifications(id) ON DELETE CASCADE,
+    storage_key TEXT NOT NULL,
+    mime_type TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+---
+
+# 5.12 Audit Logs
+
+```sql
+CREATE TABLE audit_logs (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT REFERENCES users(id),
+    action TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id BIGINT,
+    old_value JSONB,
+    new_value JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+---
+
+# 6. API Design
+
+## Authentication
+
+```http
+POST /auth/login
+GET  /auth/me
+POST /auth/logout
+```
+
+For final deployment use secure persisted users and hashed passwords. Demo accounts are acceptable only for development/demo mode.
+
+---
+
+# Departments / Users
+
+```http
+GET  /departments
+GET  /departments/{id}
+
+GET  /users/me
+GET  /users
+POST /users
+PATCH /users/{id}
+```
+
+Super Admin only for user management.
+
+---
+
+# GIS
+
+```http
+GET /gis/layers
+GET /gis/roads
+GET /gis/utilities
+GET /gis/geojson
+GET /gis/projects
+```
+
+All should support appropriate filters.
+
+## `GET /gis/utilities`
+
+Parameters:
+
 ```text
-roads
+utility_type
+bbox
+department_id
+confidence_level
+condition
+```
+
+Allowed utility types are exactly:
+
+```text
 water
 sewage
 drainage
-electrical
+natural-gas
 fibre
-natural gas
 ```
 
-Utilities should generally follow roads/corridors rather than random lines.
+## `GET /gis/projects`
 
-Add metadata such as:
+Parameters:
 
 ```text
-depth
-diameter
-material
-installation year
-condition
-confidence
-criticality
+bbox
+department_id
+status
+start_date
+end_date
+priority
 ```
 
 ---
 
-# 0.7 Frontend
-
-Refactor the React app into clear application sections:
-
-```text
-/login
-/dashboard
-/map
-/projects
-/projects/:id
-/conflicts
-/notifications
-/approvals
-/field
-/analytics
-/admin
-```
-
-Build a reusable map shell.
-
-Map controls:
-
-```text
-Layers
-Legend
-Search
-Zoom
-Date filter
-Department filter
-Project status filter
-```
-
----
-
-# 0.8 Phase 0 demo
-
-Login as:
-
-```text
-Water Department Admin
-```
-
-Show:
-
-- Nagpur map
-- water layer
-- sewer layer
-- fibre layer
-- gas layer
-- utility details
-- infrastructure ownership
-- confidence indicator
-
-Then login as:
-
-```text
-City Admin
-```
-
-and show all layers.
-
----
-
-# PHASE 0 EXIT CRITERIA
-
-Phase 0 is complete only when:
-
-- application starts from Docker
-- login works
-- roles exist
-- GIS layers load from PostGIS
-- map is usable
-- utilities are selectable
-- department ownership is visible
-- utility metadata is visible
-- spatial indexes exist
-- synthetic Nagpur data is loaded
-- no GIS data is hard-coded into frontend
-- all map data comes through backend APIs
-
-At this point:
-
-> **Dig Once is a working municipal GIS foundation.**
-
----
-
-# PHASE 1 — PROJECT PLANNING
-
-## Objective
-
-Introduce the thing that makes Dig Once operational:
-
-> **planned infrastructure work**
-
-At the end of this phase an officer can create, edit and track a project on the map.
-
----
-
-# 1.1 Project creation workflow
-
-Button:
-
-```text
-+ New Project
-```
-
-Step 1:
-
-```text
-Project information
-```
-
-Fields:
-
-```text
-Project name
-Department
-Project type
-Description
-Priority
-```
-
-Step 2:
-
-```text
-Schedule
-```
-
-Fields:
-
-```text
-planned start
-planned end
-estimated duration
-```
-
-Step 3:
-
-```text
-Execution
-```
-
-Fields:
-
-```text
-excavation width
-excavation depth
-estimated cost
-excavation cost
-restoration cost
-traffic management cost
-contractor
-```
-
-Step 4:
-
-```text
-Location
-```
-
-Admin draws:
-
-```text
-affected road corridor
-```
-
----
-
-# 1.2 Map drawing
-
-Implement:
-
-```text
-Draw line
-Edit line
-Delete line
-Clear drawing
-```
-
-When line is submitted:
-
-```text
-LINESTRING
-```
-
-is saved.
-
-Server creates derived:
-
-```text
-excavation polygon
-```
-
-using width.
-
-Do not trust a polygon sent by the frontend without server-side validation.
-
----
-
-# 1.3 Project detail page
-
-Show:
-
-```text
-Project W-104
-
-Department: Water
-Type: Pipeline replacement
-
-Start: 10 Sep
-End: 20 Sep
-
-Status: Submitted
-
-Estimated Cost: ₹20L
-```
-
-Map:
-
-```text
-project corridor
-excavation footprint
-nearby utilities
-nearby projects
-```
-
-At this phase nearby items can simply be informational.
-
-Conflict logic comes next.
-
----
-
-# 1.4 Project lifecycle
-
-Allow:
-
-```text
-Draft
- -> Submit
- -> Under Review
- -> Approved
- -> Scheduled
- -> In Progress
- -> Restoration
- -> Verification
- -> Completed
-```
-
-Basic role enforcement:
-
-- department can submit own project
-- department can edit own project before approval
-- admin can approve
-- completed projects become restricted
-
----
-
-# 1.5 Project APIs
-
-Implement:
+# Projects
 
 ```http
 POST   /projects
@@ -743,514 +1203,32 @@ PATCH  /projects/{id}
 DELETE /projects/{id}
 
 POST   /projects/{id}/submit
-POST   /projects/{id}/approve
-POST   /projects/{id}/reject
-POST   /projects/{id}/status
+POST   /projects/{id}/cancel
 ```
 
-Filters:
-
-```text
-department
-status
-date
-project_type
-bbox
-priority
-```
+Do not expose unrestricted state mutation. State transitions should be role-checked.
 
 ---
 
-# 1.6 Department visibility
-
-A department may:
-
-- edit its own project
-- view projects from other departments
-- not edit another department's project
-
-But every department can see enough project information to coordinate.
-
-This preserves the core design principle that departments should not be isolated from each other.
-
----
-
-# PHASE 1 EXIT CRITERIA
-
-A user can:
-
-1. login
-2. choose own department
-3. create project
-4. draw project corridor
-5. add dates
-6. add costs
-7. submit
-8. view the project on map
-9. change lifecycle status
-10. see projects from other departments
-
-At this point:
-
-> **Dig Once can represent what the city plans to do.**
-
----
-
-# PHASE 2 — AUTOMATIC CONFLICT DETECTION
-
-## Objective
-
-This is the first genuinely innovative phase.
-
-Whenever a project is submitted:
-
-> **the system automatically analyzes what the excavation may affect.**
-
-This directly implements the mentor's first recommendation.
-
----
-
-# 2.1 Conflict types
-
-Implement four independent conflict classes.
-
-### A. Utility conflict
-
-The project excavation footprint is close to/overlapping an underground utility.
-
-### B. Project conflict
-
-Another planned project is spatially near/overlapping.
-
-### C. Temporal conflict
-
-Two projects have overlapping or near-overlapping schedules.
-
-### D. Road conflict
-
-The excavation affects a sensitive/recently restored/high-traffic road.
-
----
-
-# 2.2 Utility conflict algorithm
-
-For every submitted project:
-
-```text
-project excavation polygon
-       |
-       v
-ST_Intersects / ST_DWithin
-       |
-       v
-nearby utilities
-```
-
-Example query concept:
-
-```sql
-SELECT *
-FROM utilities
-WHERE ST_DWithin(
-    geometry::geography,
-    :project_geometry::geography,
-    :threshold_meters
-);
-```
-
-For actual overlap:
-
-```sql
-ST_Intersects(...)
-```
-
-Calculate:
-
-```text
-distance_m
-overlap_length_m
-utility_depth
-project_depth
-```
-
-Do not only say:
-
-> "Utility found."
-
-Say:
-
-> Water pipeline detected 1.7m from proposed excavation.
-
----
-
-# 2.3 Project-to-project detection
-
-For all existing projects:
-
-```text
-same corridor?
-nearby corridor?
-overlapping dates?
-close dates?
-```
-
-Spatial filtering:
-
-```text
-ST_DWithin(...)
-```
-
-Temporal filtering:
-
-```text
-projectA.start <= projectB.end
-AND
-projectB.start <= projectA.end
-```
-
----
-
-# 2.4 Schedule proximity
-
-Exact overlap is not enough.
-
-Example:
-
-```text
-A: Sept 1–10
-B: Sept 12–20
-```
-
-These do not overlap.
-
-But:
-
-```text
-gap = 2 days
-```
-
-they may still be coordination candidates.
-
-Therefore store:
-
-```text
-temporal_overlap_days
-schedule_gap_days
-```
-
----
-
-# 2.5 Road conflict
-
-When a project intersects a road retrieve:
-
-```text
-traffic_level
-road_class
-condition
-last_resurfaced_at
-last_restored_at
-excavation_count
-```
-
-Then flag:
-
-```text
-recently_restored
-high_traffic
-frequently_excavated
-critical_road
-```
-
----
-
-# 2.6 Create conflict records
-
-Table:
-
-```text
-project_conflicts
-```
-
-Fields:
-
-```text
-id
-project_id
-other_project_id
-utility_id
-road_id
-
-conflict_type
-
-distance_m
-overlap_m
-temporal_overlap_days
-schedule_gap_days
-
-reason
-severity
-status
-created_at
-```
-
-The same table may represent multiple conflict kinds, but the schema should make the type explicit.
-
----
-
-# 2.7 Conflict API
-
-When submitting:
+# Project Analysis
 
 ```http
 POST /projects/{id}/analyze
+GET  /projects/{id}/analysis
+GET  /projects/{id}/conflicts
 ```
 
-Return:
-
-```json
-{
-  "project_id": 104,
-  "conflicts_found": 7,
-  "high_priority": 2,
-  "coordination_candidates": 3
-}
-```
-
-Also expose:
-
-```http
-GET /projects/{id}/conflicts
-GET /conflicts
-GET /conflicts/{id}
-```
+The analysis endpoint should be idempotent for the same current project state.
 
 ---
 
-# 2.8 Conflict UI
-
-After submit:
-
-```text
-Analyzing project...
-
-✓ Spatial analysis
-✓ Utility analysis
-✓ Schedule analysis
-✓ Road analysis
-
-7 issues found
-```
-
-Then show cards:
-
-```text
-HIGH
-Water pipeline
-Distance: 1.7m
-
-HIGH
-Sewer project S-48
-Schedule overlap: 6 days
-
-MEDIUM
-Recently resurfaced road
-47 days since restoration
-```
-
-Clicking a card zooms the map to the conflict.
-
----
-
-# 2.9 Phase 2 demo
-
-The demo should become:
-
-```text
-Water department
-    |
-Create project
-    |
-Draw road corridor
-    |
-Submit
-    |
-3 seconds
-    |
-SYSTEM:
-4 conflicts found
-2 high priority
-3 coordination candidates
-```
-
-This is the first moment the judges see the core innovation.
-
----
-
-# PHASE 2 EXIT CRITERIA
-
-A submitted excavation automatically:
-
-- searches nearby utilities
-- searches nearby projects
-- compares schedules
-- evaluates affected roads
-- stores conflicts
-- displays conflicts
-- highlights conflicts on map
-
-At this point:
-
-> **Dig Once detects the problem before digging happens.**
-
----
-
-# PHASE 3 — EXCAVATION PERMISSION MODULE
-
-## Objective
-
-Convert conflict detection into an actual municipal approval workflow.
-
-This directly implements the mentor's excavation-permission recommendation:
-
-> An agency must raise a digital excavation request before work.
-
----
-
-# 3.1 Separate "Project" from "Excavation Request"
-
-This is an important data-model decision.
-
-A project describes:
-
-> What work do we want to perform?
-
-An excavation request describes:
-
-> We now want permission to physically open this road.
-
-Create:
-
-### `excavation_requests`
-
-```text
-id
-project_id
-requested_start
-requested_end
-requested_area
-justification
-emergency
-status
-submitted_by
-reviewed_by
-reviewed_at
-decision_reason
-created_at
-updated_at
-```
-
----
-
-# 3.2 Excavation request workflow
-
-```text
-Project
-   |
-   v
-Create Excavation Request
-   |
-   v
-Automatic Conflict Analysis
-   |
-   +---------------------+
-   |                     |
-No conflicts          Conflicts
-   |                     |
-   v                     v
-Approval route       Coordination route
-```
-
-This is much stronger than letting admins simply mark a project as approved.
-
----
-
-# 3.3 Permission state machine
-
-Use:
-
-```text
-DRAFT
-SUBMITTED
-AUTO_SCREENED
-COORDINATION_REQUIRED
-UNDER_REVIEW
-APPROVED
-REJECTED
-MODIFICATION_REQUIRED
-CANCELLED
-```
-
----
-
-# 3.4 Permission checklist
-
-When the request is submitted, automatically evaluate:
-
-```text
-☑ location supplied
-☑ dates supplied
-☑ responsible department
-☑ nearby utilities checked
-☑ nearby projects checked
-☑ road condition checked
-☑ recent excavation checked
-☑ coordination requirement checked
-```
-
----
-
-# 3.5 Approval UI
-
-Officer sees:
-
-```text
-EXCAVATION REQUEST ER-1042
-
-Project:
-Water Pipeline Replacement
-
-Location:
-Central Avenue
-
-Requested:
-10–20 Sep
-
-Automatic screening:
-HIGH RISK
-
-Conflicts:
-3
-
-Coordination:
-Recommended
-
-[Request Coordination]
-[Approve]
-[Reject]
-[Request Changes]
-```
-
-An admin should **not** be able to casually approve a high-risk request without seeing the analysis.
-
----
-
-# 3.6 Approval APIs
+# Excavation Requests
 
 ```http
 POST /excavation-requests
 GET  /excavation-requests
 GET  /excavation-requests/{id}
+
 POST /excavation-requests/{id}/submit
 POST /excavation-requests/{id}/approve
 POST /excavation-requests/{id}/reject
@@ -1259,1648 +1237,880 @@ POST /excavation-requests/{id}/request-changes
 
 ---
 
-# 3.7 Emergency override
+# Conflicts
 
-Add:
-
-```text
-emergency = true
+```http
+GET /conflicts
+GET /conflicts/{id}
+POST /conflicts/{id}/resolve
+POST /conflicts/{id}/dismiss
 ```
 
-Emergency requests can bypass normal coordination where necessary.
+Resolution should require a reason.
 
-But the system must record:
+---
 
-```text
-why emergency
-who approved
-when
-what was bypassed
+# Coordination
+
+```http
+GET  /coordination/opportunities
+POST /coordination/groups
+GET  /coordination/groups/{id}
+POST /coordination/groups/{id}/optimize
+POST /coordination/groups/{id}/send
+
+POST /coordination/groups/{id}/respond
 ```
 
-After completion, the system can still identify future planned projects around that corridor.
+A response body should contain:
 
----
-
-# 3.8 Phase 3 demo
-
-The judge now sees:
-
-```text
-Project created
-        |
-Excavation permission requested
-        |
-System automatically screens
-        |
-High-risk conflict
-        |
-Permission is held
-        |
-Other departments must be contacted
+```json
+{
+  "response": "ACCEPT | REJECT | MODIFY",
+  "reason": "...",
+  "requested_start": "2026-09-17",
+  "requested_end": "2026-09-20"
+}
 ```
 
-This is much closer to a real government workflow.
+---
+
+# Notifications
+
+```http
+GET  /notifications
+POST /notifications/{id}/read
+POST /notifications/read-all
+```
+
+Later:
+
+```text
+WebSocket /ws/notifications
+```
 
 ---
 
-# PHASE 3 EXIT CRITERIA
+# Field Verification
 
-You have:
-
-- digital excavation requests
-- automatic screening
-- approval/rejection workflow
-- emergency override
-- audit trail
-- role-based permissions
-
-At this point:
-
-> **Dig Once is no longer merely analytical; it actively governs excavation requests.**
+```http
+POST /field/verifications
+GET  /field/verifications
+GET  /field/verifications/{id}
+POST /field/verifications/{id}/approve
+POST /field/verifications/{id}/reject
+```
 
 ---
 
-# PHASE 4 — JOINT PROJECT COORDINATION
+# Analytics
 
-## Objective
-
-Move from:
-
-> "Project A conflicts with Project B"
-
-to:
-
-> **"These projects should be planned together."**
-
-This directly implements the mentor's joint coordination recommendation.
+```http
+GET /analytics/city
+GET /analytics/departments
+GET /analytics/roads/{id}/risk
+GET /analytics/projects/{id}/impact
+GET /analytics/opportunities
+GET /analytics/excavation-hotspots
+```
 
 ---
 
-# 4.1 Compatibility engine
+# AI
 
-Create a configurable rules matrix.
+```http
+POST /ai/conflicts/{id}/explain
+POST /ai/coordination/{id}/draft
+POST /ai/query
+```
+
+AI receives structured backend data only.
+
+---
+
+# 7. Exact User Flow — Department Project to Coordinated Excavation
+
+This is the **primary hackathon workflow**.
+
+## Step 1 — Water Admin logs in
+
+Role:
+
+```text
+DEPARTMENT_ADMIN
+Department: Water Supply
+```
+
+---
+
+## Step 2 — Dashboard
+
+Water admin sees:
+
+```text
+My Projects
+Pending Requests
+Open Conflicts
+Coordination Requests
+```
+
+Clicks:
+
+```text
+Create Project
+```
+
+---
+
+## Step 3 — Create project
+
+Enters:
+
+```text
+Water Pipeline Replacement
+Start: 10 Sep
+End: 20 Sep
+Depth: 2.2m
+Width: 4m
+```
+
+Draws the corridor on the map.
+
+---
+
+## Step 4 — Save draft
+
+Backend:
+
+```text
+POST /projects
+```
+
+Creates:
+
+```text
+project = DRAFT
+```
+
+---
+
+## Step 5 — Submit project
+
+User clicks:
+
+```text
+Submit for review
+```
+
+Backend:
+
+```text
+POST /projects/{id}/submit
+```
+
+Project becomes:
+
+```text
+SUBMITTED
+```
+
+---
+
+## Step 6 — Create excavation request
+
+User clicks:
+
+```text
+Request Excavation Permission
+```
+
+---
+
+## Step 7 — Automatic screening
+
+Backend automatically runs:
+
+```text
+1. Find affected roads
+2. Find Water/Sewage/Drainage/Gas/Fibre utilities nearby
+3. Find nearby projects
+4. Compare dates
+5. Check road history
+6. Calculate severity
+7. Find coordination candidates
+```
+
+---
+
+## Step 8 — Analysis result
 
 Example:
 
-| Work A | Work B | Default |
-|---|---|---|
-| Water | Fibre | Compatible |
-| Water | Electrical | Conditional |
-| Sewer | Fibre | Conditional |
-| Sewer | Gas | Restricted |
-| Electrical | Fibre | Often compatible |
-| Road resurfacing | Utility work | Strong candidate |
-| Emergency | Any | Override |
-
-These are **configurable coordination rules**, not engineering guarantees.
-
-Store:
-
-### `coordination_rules`
-
 ```text
-id
-work_type_a
-work_type_b
-compatibility
-required_conditions
-preferred_sequence
-active
+HIGH RISK
+
+Underground conflicts: 2
+Other projects: 3
+Road risk: 88
+Coordination score: 91
 ```
 
 ---
 
-# 4.2 Coordination candidate generation
+## Step 9 — Permission state
 
-For each project:
+System changes request to:
 
 ```text
-candidate projects
-      |
-spatial filter
-      |
-temporal filter
-      |
-compatibility filter
-      |
-road impact filter
-      |
-candidate set
+COORDINATION_REQUIRED
 ```
+
+and does not send it directly to final approval.
 
 ---
 
-# 4.3 Same excavation window vs same trench
+## Step 10 — Notifications
 
-The system must not say:
-
-> "All projects will share one trench."
-
-Instead it should recommend one of:
-
-```text
-SAME_EXECUTION_WINDOW
-SAME_ROAD_OPENING_DIFFERENT_TRENCH
-SEPARATE_BUT_COORDINATED
-DO_NOT_COORDINATE
-```
-
----
-
-# 4.4 Project clusters
-
-Instead of pairwise conflicts, create a cluster.
+Affected departments receive notifications.
 
 Example:
 
 ```text
-Central Avenue
-|
-+ W-104 Water
-+ S-48 Sewer
-+ F-32 Fibre
-+ E-82 Electrical
+Sewage Department
+
+New Water excavation project overlaps your
+planned sewage work on Central Avenue.
+
+Shared corridor: 420m
+Schedule overlap: 6 days
+
+[Review]
 ```
+
+The same happens for Drainage/Gas/Fibre only when the conflict engine identifies a meaningful relationship.
+
+**Do not notify every department for every project.** Notify only affected departments or relevant coordination candidates.
+
+---
+
+## Step 11 — Coordination group
+
+Suppose Water + Sewage + Fibre are compatible.
 
 Create:
 
-### `coordination_groups`
-
 ```text
-id
-corridor_geometry
-recommended_start
-recommended_end
-coordination_type
-score
-estimated_savings
-estimated_disruption_reduction
-status
-created_at
-```
+Coordination Group #12
 
-and:
-
-### `coordination_group_projects`
-
-```text
-group_id
-project_id
+W-104
+S-48
+F-32
 ```
 
 ---
 
-# 4.5 Common window algorithm
+## Step 12 — Find common window
 
-Example:
+Current schedules:
 
 ```text
-Water:
-10–20 Sep
-
-Sewer:
-15–25 Sep
-
-Fibre:
-17–22 Sep
+Water:   10–20 Sep
+Sewage:  15–25 Sep
+Fibre:   17–22 Sep
 ```
 
-Candidate intersection:
+Candidate:
 
 ```text
 17–20 Sep
 ```
 
-Then account for minimum duration:
-
-```text
-water = 4 days minimum
-sewer = 2 days minimum
-fibre = 2 days minimum
-```
-
-If feasible:
-
-```text
-recommended window = 17–20 Sep
-```
-
-Otherwise:
-
-```text
-No common feasible window
-```
+System checks minimum required duration and compatibility.
 
 ---
 
-# 4.6 Coordination score
+## Step 13 — Coordination proposal
 
-Start deterministic.
-
-Example weights:
+Show:
 
 ```text
-Spatial overlap             30
-Temporal overlap            20
-Utility compatibility       20
-Road disruption             10
-Cost saving potential       10
-Road freshness              10
-```
-
-Normalize to:
-
-```text
-0–100
-```
-
-Classify:
-
-```text
-0–39   Low
-40–59  Moderate
-60–79  High
-80–100 Critical opportunity
-```
-
-The exact weights should be configurable.
-
----
-
-# 4.7 Coordination proposal
-
-Generate:
-
-```text
-Coordination Opportunity #12
-
-Projects:
-W-104
-S-48
-F-32
-
-Shared corridor:
-420m
-
 Current:
 3 excavation events
 
 Recommended:
 1 coordinated road-opening window
 
-Suggested:
-17–20 September
+Potential savings:
+₹X
 
-Score:
-91/100
-```
-
-Then:
-
-```text
-[Send Proposal]
+Potential road opening reduction:
+2 events
 ```
 
 ---
 
-# 4.8 Department response
+## Step 14 — Department responses
 
-Each department gets:
+Sewage:
 
 ```text
-Accept
-Reject
-Request Modification
+ACCEPT
 ```
 
-Reject requires reason.
-
-Examples:
+Fibre:
 
 ```text
-Technical incompatibility
-Resource unavailable
-Schedule conflict
-Safety restriction
-Emergency
-Other
+MODIFY
+```
+
+System recalculates.
+
+---
+
+## Step 15 — Final plan
+
+All relevant departments accept.
+
+Project changes to:
+
+```text
+APPROVED
+```
+
+and eventually:
+
+```text
+SCHEDULED
 ```
 
 ---
 
-# 4.9 Coordination workflow
+## Step 16 — Field verification
+
+Before/after execution:
 
 ```text
-Water project submitted
-      |
-Conflict engine
-      |
-Cluster found
-      |
-Proposal created
-      |
-Water   -> accepts
-Sewer   -> accepts
-Fibre   -> requests modification
-      |
-Re-optimization
-      |
-new window
-      |
-Final schedule
-```
-
-This is the workflow the judges should see.
-
----
-
-# PHASE 4 EXIT CRITERIA
-
-The system can:
-
-- identify multiple compatible projects
-- form a coordination group
-- propose a common window
-- notify involved departments
-- collect accept/reject/modification decisions
-- update the proposed window
-- produce a final coordinated schedule
-
-At this point:
-
-> **Dig Once is actually preventing repeated excavation rather than merely detecting it.**
-
----
-
-# PHASE 5 — RISK AND IMPACT INTELLIGENCE
-
-## Objective
-
-Make the system explain **which projects matter most** and quantify the consequences.
-
-This implements the mentor's conflict severity/risk scoring idea.
-
----
-
-# 5.1 Conflict severity score
-
-Create a deterministic score.
-
-Example factors:
-
-```text
-utility criticality       25%
-distance                  20%
-depth interaction         15%
-road criticality          15%
-traffic level             10%
-project urgency           10%
-data confidence             5%
-```
-
-Generate:
-
-```text
-Low
-Medium
-High
-Critical
+GPS
+Photo
+Depth
+Observed utility position
 ```
 
 ---
 
-# 5.2 Utility criticality
+## Step 17 — Completion
 
-Attributes:
-
-```text
-criticality = 1–5
-```
-
-Example:
+Project becomes:
 
 ```text
-major water main       5
-small fibre line       2
-major gas line         5
-storm drain            4
+COMPLETED
 ```
 
-These are configurable values for the prototype.
+Road history is updated.
 
 ---
 
-# 5.3 Depth interaction
+## Step 18 — Analytics
 
-Suppose:
-
-```text
-project excavation depth = 2.2m
-utility depth = 1.8m
-```
-
-This is more relevant than a utility at 0.4m if the project's excavation does not reach it.
-
-Build a simple vertical proximity model:
+City dashboard records:
 
 ```text
-horizontal distance
-+
-vertical depth relationship
-```
-
-Do not claim that this replaces engineering surveys.
-
-Label it:
-
-> preliminary digital screening.
-
----
-
-# 5.4 Road risk score
-
-For each road:
-
-```text
-traffic
-road class
-days since restoration
-past excavation frequency
-condition
-criticality
-planned projects
-```
-
-Produce:
-
-```text
-Road Risk = 0–100
-```
-
-Example:
-
-```text
-Central Avenue
-92 / 100
-HIGH RISK
+1 coordinated excavation
+2 potential excavations avoided
+1 restoration cycle
+estimated savings
 ```
 
 ---
 
-# 5.5 Historical excavation frequency
+# 8. Conflict Detection Logic for the Five Networks
 
-Create:
-
-```text
-road_excavation_events
-```
-
-or derive history from completed projects.
-
-Metrics:
+Every new excavation is checked against exactly:
 
 ```text
-excavations_30d
-excavations_90d
-excavations_365d
+Water Supply
+Sewage
+Drainage
+Natural Gas
+Fibre Network
 ```
 
-Then:
+## 8.1 Water Supply
 
-> 4 excavation events in 12 months.
+Check:
+
+```text
+Horizontal proximity
+Overlap
+Depth
+Criticality
+Condition
+```
+
+Potential output:
+
+```text
+HIGH
+Water Supply W-121 lies 1.2m from the excavation.
+```
 
 ---
 
-# 5.6 Recently restored road warning
+## 8.2 Sewage
 
-When:
+Check:
 
 ```text
-today - last_restored_at
+Horizontal proximity
+Overlap
+Depth
+Criticality
+Project schedule
 ```
 
-is small relative to the configured protection period:
+Potential output:
 
 ```text
-ROAD PROTECTION WARNING
+MEDIUM
+Sewer rehabilitation project overlaps this corridor.
 ```
 
-Do not hard-code a policy period as a municipal fact.
+---
 
-Store:
+## 8.3 Drainage
 
-### `system_policies`
+Check:
 
 ```text
-id
-policy_key
-policy_value
-description
+Proximity
+Overlap
+Depth
+Condition
+Road drainage importance
+```
+
+Drainage should be especially visible when projects affect roads vulnerable to waterlogging in the synthetic dataset, but this must be represented as dataset attributes rather than claimed real-world facts.
+
+---
+
+## 8.4 Natural Gas
+
+Treat as a high-sensitivity network in the prototype scoring configuration.
+
+Check:
+
+```text
+Proximity
+Depth
+Criticality
+Installation data confidence
+```
+
+Potential output:
+
+```text
+CRITICAL
+Natural Gas line within excavation safety threshold.
+```
+
+The UI should clearly state:
+
+> Preliminary digital screening — field verification required.
+
+Do not present the model as a substitute for gas safety procedures or engineering authorization.
+
+---
+
+## 8.5 Fibre Network
+
+Check:
+
+```text
+Proximity
+Overlap
+Depth
+Cable metadata
+Planned fibre project schedule
+```
+
+Potential output:
+
+```text
+MEDIUM
+Fibre project F-32 overlaps the proposed corridor.
+```
+
+---
+
+# 9. Utility Conflict Thresholds
+
+Do not hard-code one threshold for all five networks.
+
+Use a configurable table:
+
+```text
+utility_type
+warning_distance_m
+critical_distance_m
+criticality_default
 active
 ```
 
-Example:
+Example prototype configuration:
 
 ```text
-recent_restoration_protection_days = configurable
+water       5m   2m
+sewage      5m   2m
+drainage    5m   2m
+natural-gas 8m   4m
+fibre       3m   1.5m
 ```
+
+These numbers are **prototype/demo thresholds**, not municipal engineering standards. Mark them as configurable assumptions.
 
 ---
 
-# 5.7 Cost model
+# 10. Risk Scoring
 
-For every project:
+The score should be deterministic and explainable.
 
-```text
-construction cost
-excavation cost
-restoration cost
-traffic management cost
-```
-
-Estimate:
-
-### Separate
+Suggested structure:
 
 ```text
-A excavation + restoration
-B excavation + restoration
-C excavation + restoration
+Risk Score
+=
+Utility Risk
++ Distance Risk
++ Depth Risk
++ Road Risk
++ Schedule Risk
++ Data Confidence Risk
 ```
 
-### Coordinated
+Example weighting:
 
 ```text
-shared road opening
-shared traffic management
-shared restoration
+Utility criticality       25%
+Distance                  20%
+Depth interaction         15%
+Road criticality          15%
+Schedule overlap          10%
+Project priority          10%
+Data confidence             5%
 ```
 
-Then:
+Result:
 
 ```text
-potential_savings
+0–39    LOW
+40–59   MEDIUM
+60–79   HIGH
+80–100  CRITICAL
 ```
 
-Always label synthetic estimates as:
-
-> Estimated from configured cost assumptions.
+Every score must expose its reason breakdown.
 
 ---
 
-# 5.8 Disruption model
+# 11. Coordination Scoring
 
-Calculate:
+Separate **risk** from **coordination opportunity**.
 
-```text
-road_closure_days
-affected_length
-traffic_level
-number_of_road_opening_events
-```
+A dangerous conflict is not necessarily a good coordination candidate.
 
-Compare:
+Coordination score:
 
 ```text
-before coordination
-vs
-after coordination
+Spatial overlap             30%
+Temporal overlap            20%
+Compatibility               20%
+Disruption reduction        10%
+Cost saving potential       10%
+Road freshness              10%
 ```
 
 Output:
 
 ```text
-Excavation events: 3 -> 1
-Road openings:     3 -> 1
-Closure days:     18 -> 7
+Low opportunity
+Moderate opportunity
+High opportunity
+Critical opportunity
 ```
 
 ---
 
-# 5.9 Opportunity ranking
+# 12. Coordination Compatibility Matrix for Five Networks
 
-Create a city list:
+The matrix should be configuration data, not application code.
 
-```text
-Top coordination opportunities
+Example prototype:
 
-1. Central Avenue         94
-2. Wardha Road            89
-3. Ring Road              82
-4. Seminary Hills         76
-```
+| Work A | Work B | Prototype default |
+|---|---|---|
+| Water | Sewage | Conditional |
+| Water | Drainage | Compatible |
+| Water | Natural Gas | Restricted |
+| Water | Fibre | Compatible |
+| Sewage | Drainage | Conditional |
+| Sewage | Natural Gas | Restricted |
+| Sewage | Fibre | Conditional |
+| Drainage | Natural Gas | Restricted |
+| Drainage | Fibre | Compatible |
+| Natural Gas | Fibre | Conditional |
 
-This gives leadership something actionable.
-
----
-
-# PHASE 5 EXIT CRITERIA
-
-Every conflict/project now has:
-
-- severity
-- risk score
-- road risk
-- utility criticality
-- cost estimate
-- disruption estimate
-- coordination opportunity score
-
-At this point:
-
-> **The system does not just detect conflicts; it prioritizes them and quantifies their value.**
+This does **not** mean they can occupy the same trench. It means they may be considered for coordinated planning subject to the configured rules and field/engineering verification.
 
 ---
 
-# PHASE 6 — AI COORDINATION COPILOT
+# 13. Road Interaction
 
-## Objective
+Roads remain important even though they are not an underground network layer.
 
-Add AI only after the deterministic system is reliable.
+For every project:
 
-AI should make the system easier for officers to understand and operate.
+```text
+Find affected road(s)
+```
+
+Then calculate:
+
+```text
+traffic level
+road class
+road condition
+days since restoration
+past excavation frequency
+```
+
+This creates:
+
+```text
+Road Risk
+```
+
+The five underground network layers explain **what is underneath**.
+
+The road layer explains **what surface will be disrupted**.
+
+Projects connect both worlds.
 
 ---
 
-# 6.1 AI architecture
+# 14. Data Import Strategy
+
+## Current five-network GeoJSON
+
+Continue using the current files for initial seeding:
 
 ```text
-PostGIS / rules / optimization
-        |
-        v
-structured JSON
-        |
-        v
-Gemini
-        |
-        +--> explanation
-        +--> recommendation wording
-        +--> coordination notice
-        +--> natural language answer
+water.geojson
+sewage.geojson
+drainage.geojson
+natural-gas.geojson
+fibre.geojson
 ```
 
-Do not send arbitrary database state to the model.
+Import them through the backend data import pipeline.
 
-Build structured prompts.
+Do not load them directly in React.
 
 ---
 
-# 6.2 AI conflict explanation
+# 15. Future Network Upload Page
 
-Input:
-
-```json
-{
-  "shared_corridor_m": 420,
-  "temporal_overlap_days": 6,
-  "road_risk": 91,
-  "compatibility": "conditional",
-  "estimated_savings": 800000
-}
-```
-
-AI output:
+Route:
 
 ```text
-This coordination opportunity is high priority because the
-three projects affect the same 420m corridor, overlap for six
-days, and involve a high-risk recently restored road.
+/admin/gis/import
 ```
 
-All numbers originate from backend calculations.
-
----
-
-# 6.3 AI coordination proposal
-
-Gemini creates:
+Workflow:
 
 ```text
-Subject:
-Coordination request for Central Avenue corridor
-
-Message:
-Water, Sewer and Fibre projects are currently planned on the
-same 420m corridor. The system estimates that execution in a
-single coordinated road-opening window may reduce repeated
-excavation and restoration.
-```
-
----
-
-# 6.4 AI "why" explanation
-
-User:
-
-> Why is this conflict critical?
-
-AI answers using only structured facts:
-
-```text
-Critical because:
-
-1. Utility is high criticality.
-2. Proposed excavation is within threshold distance.
-3. Road was recently restored.
-4. Three projects are scheduled nearby.
-5. Coordination could avoid two additional road openings.
-```
-
----
-
-# 6.5 Natural-language analytics
-
-Add:
-
-```text
-Ask Dig Once
-```
-
-Examples:
-
-> Which roads have the highest excavation risk?
-
-> Show projects planned on Central Avenue next month.
-
-> Why is project W-104 blocked?
-
-> Which departments need to coordinate for this corridor?
-
-Gemini translates the question into a **known backend query/tool**, not unrestricted SQL.
-
----
-
-# 6.6 AI document extraction
-
-Later in the same phase, support:
-
-```text
-project proposal PDF
-utility document
-contractor document
-```
-
-AI extracts candidate:
-
-```text
-project name
-work type
-dates
-location
-estimated cost
-department
-```
-
-Then:
-
-```text
-AI extraction
+Select network type
       |
-human verification
+Upload file
       |
-database
-```
-
----
-
-# PHASE 6 EXIT CRITERIA
-
-AI can:
-
-- explain a conflict
-- generate a coordination proposal
-- summarize risk
-- answer controlled natural-language questions
-- draft department notifications
-- extract candidate project metadata from documents
-
-At this point:
-
-> **AI is an assistant, not a source of truth.**
-
----
-
-# PHASE 7 — FIELD VERIFICATION
-
-## Objective
-
-Solve the real-world data problem.
-
-The map is only useful if the actual infrastructure matches the map.
-
-This phase implements the mentor's field verification recommendation.
-
----
-
-# 7.1 Field engineer role
-
-New role:
-
-```text
-FIELD_ENGINEER
-```
-
-Field engineers can:
-
-- view assigned projects
-- open a project on mobile
-- capture GPS location
-- capture photos
-- record actual utility location
-- add observations
-- mark infrastructure verified
-- submit discrepancy report
-
----
-
-# 7.2 Field verification entity
-
-Create:
-
-### `field_verifications`
-
-```text
-id
-project_id
-utility_id
-engineer_id
-gps_point
-observed_geometry
-observation_type
-photos
-notes
-measured_depth
-verified
-created_at
-```
-
----
-
-# 7.3 Verification workflow
-
-```text
-Project approved
+Validate
       |
-Field verification assigned
+Preview on map
       |
-Engineer opens project
+Map fields
       |
-GPS location
+Confirm
       |
-Photo
-      |
-Observed utility
-      |
-Compare against GIS
-      |
-Matched / discrepancy
-      |
-Submit
+Import into PostGIS
 ```
 
----
-
-# 7.4 Discrepancy workflow
-
-Suppose GIS says:
+Allowed network types:
 
 ```text
-water line here
+Water Supply
+Sewage
+Drainage
+Natural Gas
+Fibre Network
 ```
 
-Field engineer observes:
-
-```text
-water line 4.2m away
-```
-
-System creates:
-
-```text
-DATA DISCREPANCY
-```
-
-Then:
-
-```text
-current GIS geometry
-vs
-observed geometry
-```
-
-A supervisor can:
-
-```text
-Accept update
-Reject
-Request re-survey
-```
-
----
-
-# 7.5 GPS + photo
-
-The field screen should capture:
-
-```text
-Latitude
-Longitude
-Timestamp
-Photo
-Depth
-Observation notes
-```
-
-The backend stores the coordinates and file metadata.
-
-Photos should live in object storage, not PostgreSQL.
-
----
-
-# 7.6 Infrastructure confidence
-
-Every utility receives:
-
-```text
-VERIFIED
-SURVEYED
-DIGITIZED
-ESTIMATED
-```
-
-The confidence should increase after successful field verification.
-
-Example:
-
-```text
-Old confidence:
-Estimated
-
-After field verification:
-Verified
-```
-
----
-
-# 7.7 Scanned map upload
-
-Now add the previously discussed import workflow.
-
-Supported:
+File types:
 
 ```text
 GeoJSON
 KML
 CSV
 Shapefile
-PDF
-JPG
-PNG
-```
-
-For scanned maps:
-
-```text
-Upload
-   |
-preview
-   |
-choose control points
-   |
-georeference
-   |
-overlay
-   |
-manual digitization
-   |
-verification
-   |
-PostGIS
-```
-
-Do not automatically convert an arbitrary photo directly into authoritative infrastructure data.
-
----
-
-# 7.8 AI-assisted digitization
-
-Optional final enhancement:
-
-```text
-scan
- |
-AI line detection
- |
-candidate utility
- |
-human confirmation
- |
-PostGIS
 ```
 
 ---
 
-# PHASE 7 EXIT CRITERIA
+# 16. Scanned Paper Map Workflow
 
-Now the platform can:
+Do this only after the core application works.
 
-- support field engineers
-- capture GPS observations
-- capture photos
-- verify utilities
-- record discrepancies
-- update confidence
-- import GIS files
-- work with scanned maps
-- optionally assist digitization
-
-At this point:
-
-> **The platform has a feedback loop that improves the quality of the city map over time.**
-
----
-
-# PHASE 8 — CITY COMMAND CENTER
-
-## Objective
-
-Move from project-level operations to city-level management.
-
-This is the executive experience.
-
----
-
-# 8.1 Executive KPIs
-
-Dashboard cards:
+Workflow:
 
 ```text
-Active projects
-Open excavation requests
-High-risk conflicts
-Coordination opportunities
-Projects coordinated
-Excavations potentially avoided
-Estimated savings
-Road closure days reduced
+Upload JPG/PDF
+      |
+Preview
+      |
+Choose 3+ known reference points
+      |
+Georeference
+      |
+Overlay on Nagpur map
+      |
+Manually digitize network lines
+      |
+Select network type
+      |
+Save as unverified
+      |
+Field verification
+      |
+Verified GIS record
 ```
 
+The AI can assist with line detection later, but the human must confirm the network.
+
 ---
 
-# 8.2 City map
+# 17. Notification Rules
 
-Add map modes:
+Do not spam all five departments.
+
+## Rule 1 — Utility impact
+
+If new excavation is within the configured threshold of another department's utility:
 
 ```text
-Infrastructure density
-Excavation hotspots
-Repeated excavation
-High-risk roads
-Upcoming works
-Coordination clusters
+Notify that department
 ```
 
----
+## Rule 2 — Project overlap
 
-# 8.3 Department dashboard
-
-Example:
+If another department has a project on the same/nearby corridor:
 
 ```text
-Water
---------
-Projects: 27
-Pending requests: 4
-Conflicts: 8
-Accepted coordination: 5
+Notify that department
+```
+
+## Rule 3 — Coordination candidate
+
+If coordination score exceeds threshold:
+
+```text
+Create coordination opportunity
+Notify involved departments
+```
+
+## Rule 4 — Critical conflict
+
+If severity is CRITICAL:
+
+```text
+Escalate to City Admin
 ```
 
 ---
 
-# 8.4 Excavation heatmap
+# 18. Notification State
 
-Color road segments by:
-
-```text
-number of excavation events
-```
-
-Example:
+A notification should have:
 
 ```text
-0–1 green
-2–3 yellow
-4–5 orange
-6+ red
+UNREAD
+READ
+ACKNOWLEDGED
+ACTIONED
 ```
 
-This makes repeated excavation immediately visible.
+For action-required notifications:
+
+```text
+notification -> coordination/approval page
+```
+
+Do not make users search for the relevant project manually.
 
 ---
 
-# 8.5 Coordination analytics
+# 19. Project Status Machine
 
-Show:
-
-```text
-projects initially planned
-projects coordinated
-excavations avoided
-estimated savings
-```
-
-Over time:
+Use a strict state machine.
 
 ```text
-monthly
-quarterly
+DRAFT
+  |
+SUBMITTED
+  |
+AUTO_SCREENED
+  |
++-----------------------+
+|                       |
+NO COORDINATION      COORDINATION_REQUIRED
+|                       |
+APPROVED              COORDINATION
+|                       |
+SCHEDULED          FINAL_PLAN
+|                       |
+IN_PROGRESS             |
+|                       |
+RESTORATION             |
+|                       |
+VERIFICATION            |
+|                       |
+COMPLETED <-------------+
 ```
+
+Rejected projects can move to:
+
+```text
+REJECTED
+```
+
+Emergency projects can take an emergency approval route but must be audited.
 
 ---
 
-# 8.6 Audit dashboard
+# 20. Audit Events
 
-Government decision systems need traceability.
-
-Show:
-
-```text
-Who created project?
-Who changed dates?
-Who approved excavation?
-Who rejected coordination?
-Why?
-Who verified field data?
-```
-
----
-
-# 8.7 Policy management
-
-Super admin can configure:
-
-```text
-recent restoration protection period
-conflict thresholds
-utility criticality
-coordination weights
-approval rules
-emergency policy
-```
-
-This avoids hard-coded policy assumptions.
-
----
-
-# PHASE 8 EXIT CRITERIA
-
-An NMC-level administrator can:
-
-- see the entire city
-- see project pipeline
-- see risk hotspots
-- see high-priority conflicts
-- see coordination opportunities
-- see impact metrics
-- inspect approvals
-- inspect audit history
-- configure rules
-
-At this point:
-
-> **Dig Once is a city infrastructure command center.**
-
----
-
-# PHASE 9 — HACKATHON HARDENING
-
-## Objective
-
-Turn the technically complete system into the strongest possible competition submission.
-
-This phase is not "extra polish." It is part of the product.
-
----
-
-# 9.1 Freeze the feature set
-
-No new major features after the freeze.
-
-Only:
-
-- bug fixes
-- reliability
-- performance
-- UX
-- demo preparation
-- security
-- deployment
-- visual polish
-
----
-
-# 9.2 Build one deterministic winning scenario
-
-Create a fixed dataset.
-
-### Central Avenue scenario
-
-```text
-Project W-104
-Water pipeline replacement
-10–20 Sep
-
-Project S-48
-Sewer rehabilitation
-15–25 Sep
-
-Project F-32
-Fibre installation
-17–22 Sep
-```
-
-Road characteristics:
-
-```text
-high traffic
-recently restored
-multiple previous excavations
-```
-
-Expected result:
-
-```text
-3 independent excavation plans
-        |
-        v
-1 coordination cluster
-        |
-        v
-recommended common window
-```
-
----
-
-# 9.3 Prepare a no-failure demo mode
-
-Do not depend on the internet or random data during judging.
-
-Add:
-
-```text
-Demo Mode
-```
-
-It should seed:
-
-- departments
-- users
-- roads
-- utilities
-- projects
-- conflicts
-- notifications
-- coordination groups
-
-Then the exact demo starts from a known state.
-
----
-
-# 9.4 Measure demo outputs
-
-The final demo should show real calculations from your synthetic dataset.
-
-For example:
-
-```text
-Current plans:
-3 excavation events
-
-Recommended:
-1 coordinated execution window
-
-Potential reduction:
-2 excavation events
-
-Estimated cost saving:
-₹X
-
-Road opening reduction:
-2 events
-
-Potential disruption reduction:
-X%
-```
-
-Do not hard-code a value into the UI unless it is explicitly presented as demo/static content.
-
----
-
-# 9.5 Demo flow
-
-The whole live demo should fit into one uninterrupted story.
-
-### Step 1
-
-Login as Water Department.
-
-### Step 2
-
-Create water project.
-
-### Step 3
-
-Draw corridor.
-
-### Step 4
-
-Submit excavation request.
-
-### Step 5
-
-System automatically detects:
-
-```text
-3 project conflicts
-1 recently restored road
-2 utility risks
-```
-
-### Step 6
-
-Permission is held because coordination is required.
-
-### Step 7
-
-Open coordination page.
-
-Show:
-
-```text
-W-104
-S-48
-F-32
-```
-
-### Step 8
-
-System proposes:
-
-```text
-17–20 Sep
-```
-
-### Step 9
-
-Other departments receive notifications.
-
-### Step 10
-
-Sewer accepts.
-
-### Step 11
-
-Fibre requests modification.
-
-### Step 12
-
-System recalculates.
-
-### Step 13
-
-Final schedule accepted.
-
-### Step 14
-
-Show impact:
-
-```text
-3 excavation events -> 1
-3 restorations -> 1
-3 road disruptions -> 1
-```
-
-### Step 15
-
-Open AI explanation:
-
-> Why did the system recommend this?
-
-### Step 16
-
-Finish with:
-
-> **Before a road is opened, know who else needs to open it.**
-
----
-
-# 10. API roadmap
-
-The API surface should grow roughly in this order.
-
-## Existing / Phase 0
-
-```http
-POST /auth/login
-GET  /auth/demo-accounts
-GET  /health
-GET  /db-version
-GET  /gis/geojson
-```
-
-## Phase 0–1
-
-```http
-GET /departments
-GET /users/me
-
-GET /gis/roads
-GET /gis/utilities
-GET /gis/projects
-
-POST /projects
-GET /projects
-GET /projects/{id}
-PATCH /projects/{id}
-DELETE /projects/{id}
-
-POST /projects/{id}/submit
-POST /projects/{id}/approve
-POST /projects/{id}/reject
-```
-
-## Phase 2
-
-```http
-POST /projects/{id}/analyze
-
-GET /projects/{id}/conflicts
-GET /conflicts
-GET /conflicts/{id}
-```
-
-## Phase 3
-
-```http
-POST /excavation-requests
-GET  /excavation-requests
-GET  /excavation-requests/{id}
-
-POST /excavation-requests/{id}/submit
-POST /excavation-requests/{id}/approve
-POST /excavation-requests/{id}/reject
-POST /excavation-requests/{id}/request-changes
-```
-
-## Phase 4
-
-```http
-GET  /coordination/opportunities
-GET  /coordination/groups/{id}
-
-POST /coordination/groups
-POST /coordination/groups/{id}/proposals
-POST /coordination/proposals/{id}/accept
-POST /coordination/proposals/{id}/reject
-POST /coordination/proposals/{id}/modify
-POST /coordination/groups/{id}/optimize
-```
-
-## Phase 5
-
-```http
-GET /analytics/roads/{id}/risk
-GET /analytics/projects/{id}/impact
-GET /analytics/opportunities
-GET /analytics/excavations
-```
-
-## Phase 6
-
-```http
-POST /ai/conflicts/{id}/explain
-POST /ai/coordination/{id}/proposal
-POST /ai/query
-POST /ai/documents/extract
-```
-
-## Phase 7
-
-```http
-POST /field/verifications
-GET  /field/verifications
-POST /field/verifications/{id}/approve
-
-POST /gis/import
-POST /gis/georeference
-POST /gis/digitize
-```
-
-## Phase 8
-
-```http
-GET /dashboard/city
-GET /dashboard/departments
-GET /dashboard/impact
-GET /dashboard/hotspots
-GET /audit
-```
-
----
-
-# 11. Database evolution roadmap
-
-Do not try to create the final schema on day one.
-
-Use incremental migrations.
-
-```text
-001_gis.sql
-```
-
-already exists.
-
-Then:
-
-```text
-002_departments_users.sql
-003_roads_utilities.sql
-004_projects.sql
-005_project_conflicts.sql
-006_excavation_requests.sql
-007_notifications.sql
-008_coordination.sql
-009_risk_and_policies.sql
-010_field_verification.sql
-011_documents.sql
-012_analytics_views.sql
-013_audit_indexes.sql
-```
-
-Every migration should be reversible where practical.
-
----
-
-# 12. Notification architecture
-
-Notifications are critical enough that they should be treated as a first-class subsystem.
-
-Use:
-
-```text
-database
-+
-websocket/realtime
-+
-optional email/push
-```
-
-First build:
-
-```text
-database notification
-+
-in-app notification
-```
-
-Then optionally add:
-
-```text
-WebSocket
-email
-FCM
-```
-
-A notification should carry:
-
-```text
-type
-severity
-action_required
-source_project
-related_project
-recipient
-created_at
-read_at
-```
-
----
-
-# 13. Audit architecture
-
-Every important state transition should generate an audit event.
-
-Examples:
+At minimum:
 
 ```text
 PROJECT_CREATED
+PROJECT_UPDATED
 PROJECT_SUBMITTED
+EXCAVATION_REQUEST_CREATED
+EXCAVATION_REQUEST_SUBMITTED
 CONFLICT_DETECTED
-EXCAVATION_REQUESTED
-COORDINATION_REQUESTED
+CONFLICT_RESOLVED
+COORDINATION_CREATED
+COORDINATION_SENT
 COORDINATION_ACCEPTED
 COORDINATION_REJECTED
+COORDINATION_MODIFIED
 EXCAVATION_APPROVED
 EXCAVATION_REJECTED
 FIELD_VERIFICATION_CREATED
@@ -2908,767 +2118,619 @@ FIELD_VERIFICATION_APPROVED
 PROJECT_COMPLETED
 ```
 
-This makes the system defensible as government software.
+---
+
+# 21. Implementation Phases
+
+## Phase 0 — Existing GIS foundation
+
+### Backend
+
+- normalize five utility types
+- introduce departments
+- persist users
+- migrate GIS data to `utilities`
+- introduce `roads`
+- improve GIS filtering
+
+### Frontend
+
+- map shell
+- exact five network toggles
+- road overlay
+- utility detail drawer
+- department-based visibility/editing
+
+### Done when
+
+The map reliably shows exactly:
+
+```text
+Water
+Sewage
+Drainage
+Natural Gas
+Fibre
+```
+
+plus the separate road/project overlays.
 
 ---
 
-# 14. Testing strategy
+## Phase 1 — Project Management
 
-Do not leave testing until the end.
+### Backend
 
-## Unit tests
+- projects table
+- project CRUD
+- project-road association
+- geometry validation
+- project status machine
 
-Test:
+### Frontend
 
-- date overlap
-- distance thresholds
-- conflict severity
-- coordination score
-- common window calculation
+- project list
+- create project
+- draw corridor
+- project detail
+- project timeline
+
+### Done when
+
+A department can create a real map-based project.
+
+---
+
+## Phase 2 — Conflict Detection
+
+### Backend
+
+- PostGIS proximity queries
+- spatial project conflict
+- temporal project conflict
+- five-network impact detection
+- road checks
+- conflict records
+
+### Frontend
+
+- conflict result screen
+- map highlighting
+- severity cards
+- utility details
+
+### Done when
+
+Submitting a project automatically reveals affected networks/projects.
+
+---
+
+## Phase 3 — Excavation Permission
+
+### Backend
+
+- excavation request model
+- screening workflow
+- approval/rejection
+- emergency path
+- audit events
+
+### Frontend
+
+- request permission
+- review request
+- checklist
+- decision screen
+
+### Done when
+
+A project cannot reach excavation approval without going through the digital screening process.
+
+---
+
+## Phase 4 — Joint Coordination
+
+### Backend
+
 - compatibility rules
-- cost calculations
+- coordination groups
+- common-window algorithm
+- proposal lifecycle
+- department responses
+- notification creation
 
-## PostGIS integration tests
+### Frontend
 
-Test:
+- opportunities page
+- coordination detail
+- accept/reject/modify
+- common-window visualization
 
-```text
-project intersects utility
-project near utility
-project outside utility threshold
-projects overlap spatially
-projects are near but non-overlapping
-road intersection
-```
+### Done when
 
-## API tests
-
-Test:
-
-```text
-unauthorized access
-department isolation
-project CRUD
-approval permissions
-notification creation
-coordination workflow
-```
-
-## End-to-end test
-
-One full path:
-
-```text
-login
- -> create project
- -> submit
- -> conflict detection
- -> excavation request
- -> coordination
- -> approval
- -> completion
-```
-
-This should run automatically before judging.
+Three projects can become one coordinated road-opening plan.
 
 ---
 
-# 15. Security hardening
+## Phase 5 — Risk + Impact
 
-The current repository uses demo-only credentials. Before final deployment:
+### Backend
 
-- hash passwords
-- use JWT/session-based auth
-- never return password data
-- validate department ownership server-side
-- validate geometry server-side
-- restrict state transitions
-- rate-limit sensitive endpoints
-- validate uploads
-- prevent arbitrary file execution
-- use environment secrets
-- disable demo account enumeration in production
-
----
-
-# 16. Performance strategy
-
-Initially:
-
-```text
-PostGIS spatial queries
-```
-
-are enough.
-
-When the synthetic dataset becomes larger:
-
-- add GiST indexes
-- use `ST_DWithin`
-- use bounding-box prefiltering
-- paginate project queries
-- filter by viewport
-- cache repeated analytics
-- move expensive conflict analysis to background workers
-
-Do not prematurely introduce a complicated architecture.
-
----
-
-# 17. Synthetic data generation strategy
-
-Create scripts:
-
-```text
-scripts/
-    generate_roads.py
-    generate_utilities.py
-    generate_projects.py
-    generate_demo_scenario.py
-    reset_demo.py
-```
-
-The dataset should support:
-
-### Scenario 1
-three projects on one road
-
-### Scenario 2
-two overlapping projects
-
-### Scenario 3
-recent resurfacing
-
-### Scenario 4
-high-risk utility
-
-### Scenario 5
-incompatible projects
-
-### Scenario 6
-emergency request
-
-### Scenario 7
-field verification discrepancy
-
----
-
-# 18. What is mandatory vs optional
-
-## Absolute mandatory
-
-These are protected from feature cuts:
-
-1. GIS map
-2. underground utilities
-3. departments/RBAC
-4. project creation
-5. excavation request
-6. automatic spatial conflict
-7. automatic temporal conflict
-8. severity/risk
-9. cross-department notification
-10. joint coordination proposal
-11. acceptance/rejection workflow
-12. measurable impact
-
----
-
-## Strong differentiators
-
-Build when the core works:
-
-- road excavation history
-- recently restored road warning
+- utility risk score
 - road risk score
-- utility criticality
+- coordination score
 - cost model
 - disruption model
-- project clustering
-- data confidence
-- field verification
+- hotspot analytics
+
+### Frontend
+
+- risk cards
+- score breakdown
+- before/after impact
+- opportunity ranking
+
+### Done when
+
+The system can explain why one coordination opportunity matters more than another.
 
 ---
 
-## Wow features
+## Phase 6 — AI Copilot
 
-Only after all mandatory functionality is stable:
+### Backend
 
-- AI copilot
-- natural language search
-- scanned map georeferencing
-- AI-assisted digitization
-- document extraction
-- advanced analytics
+- Gemini integration
+- structured prompt layer
+- conflict explanation endpoint
+- coordination proposal drafting
+- controlled NL analytics
 
----
+### Frontend
 
-# 19. Team execution order
+- Ask Dig Once
+- Explain This Conflict
+- Draft Coordination Notice
 
-Do not divide work by "frontend person / backend person" only.
+### Done when
 
-Divide by **product verticals**.
-
-## Track A — GIS/Data
-
-Own:
-
-- PostGIS
-- roads
-- utilities
-- project geometry
-- import
-- spatial queries
-
-## Track B — Project/Permission Backend
-
-Own:
-
-- users
-- departments
-- projects
-- excavation requests
-- approvals
-- audit
-
-## Track C — Coordination Engine
-
-Own:
-
-- spatial conflicts
-- temporal conflicts
-- severity
-- compatibility
-- clustering
-- optimization
-- cost/disruption
-
-## Track D — Frontend/GIS UX
-
-Own:
-
-- dashboard
-- map
-- drawing
-- project flow
-- conflicts
-- notifications
-- approvals
-- analytics
-
-## Track E — AI/Field
-
-Own:
-
-- Gemini
-- AI explanations
-- natural-language queries
-- field verification
-- image/document processing
+AI can explain deterministic system output without becoming the source of truth.
 
 ---
 
-# 20. Dependency order
+## Phase 7 — Field Verification
 
-The team must respect this:
+### Backend
 
-```text
-DATABASE
-   |
-   v
-GIS
-   |
-   v
-PROJECTS
-   |
-   v
-SPATIAL CONFLICT
-   |
-   v
-TEMPORAL CONFLICT
-   |
-   v
-RISK
-   |
-   v
-EXCAVATION PERMISSION
-   |
-   v
-COORDINATION
-   |
-   v
-OPTIMIZATION
-   |
-   v
-NOTIFICATIONS
-   |
-   v
-AI
-   |
-   v
-FIELD VERIFICATION
-   |
-   v
-ANALYTICS
-```
+- field verification table
+- GPS point storage
+- file metadata
+- discrepancy workflow
+- confidence update
 
-Do not build AI first.
+### Frontend
 
-Do not build the executive dashboard first.
+- mobile verification screen
+- GPS capture
+- photo upload
+- discrepancy comparison
 
-Do not spend days polishing the login page while the conflict engine is missing.
+### Done when
+
+A field engineer can verify a network asset and improve the GIS record.
 
 ---
 
-# 21. Recommended phase checkpoints
+## Phase 8 — City Command Center
 
-## Checkpoint A — Foundation
+### Backend
 
-```text
-GIS works.
-```
+- aggregate analytics
+- city KPIs
+- department KPIs
+- heatmaps
+- audit APIs
 
-## Checkpoint B — Planning
+### Frontend
 
-```text
-Projects work.
-```
+- command dashboard
+- heatmap
+- KPI cards
+- city coordination table
 
-## Checkpoint C — Core innovation
+### Done when
 
-```text
-Conflicts work.
-```
-
-## Checkpoint D — Government workflow
-
-```text
-Permissions work.
-```
-
-## Checkpoint E — Actual Dig Once value
-
-```text
-Coordination works.
-```
-
-## Checkpoint F — Intelligence
-
-```text
-Risk + cost + disruption work.
-```
-
-## Checkpoint G — AI
-
-```text
-AI explains and assists.
-```
-
-## Checkpoint H — Field
-
-```text
-GIS improves from reality.
-```
-
-## Checkpoint I — Competition
-
-```text
-Everything works flawlessly in one demo.
-```
+A City Admin can understand the overall excavation/coordination situation in one screen.
 
 ---
 
-# 22. What "complete application" means after each phase
+## Phase 9 — Competition Hardening
 
-### End of Phase 0
+### Engineering
 
-A city map application.
+- full E2E test
+- performance checks
+- seeded demo dataset
+- deployment
+- failure recovery
+- security hardening
 
-### End of Phase 1
+### Product
 
-A municipal project planning application.
+- visual consistency
+- loading states
+- empty states
+- error states
+- excellent map UX
+- clear score explanations
 
-### End of Phase 2
+### Demo
 
-A conflict detection application.
+Use one fixed scenario that involves **at least three of the five networks**.
 
-### End of Phase 3
+Preferred scenario:
 
-A digital excavation permission system.
+```text
+Water Supply
+Sewage
+Fibre Network
+```
 
-### End of Phase 4
+Optional second conflict:
 
-A cross-department infrastructure coordination system.
+```text
+Natural Gas
+```
 
-### End of Phase 5
-
-A civic decision-support system.
-
-### End of Phase 6
-
-An AI-assisted infrastructure planning system.
-
-### End of Phase 7
-
-A continuously improving infrastructure information system.
-
-### End of Phase 8
-
-A municipal infrastructure command center.
-
-### End of Phase 9
-
-A competition-ready product.
+Drainage can appear as an additional affected network where appropriate.
 
 ---
 
-# 23. Final product workflow
+# 22. Recommended Winning Demo Scenario
 
-The final system should ultimately behave like this:
+## Central Avenue
+
+Synthetic road properties:
 
 ```text
-                    DEPARTMENT
-                         |
-                         v
-                  Create Project
-                         |
-                         v
-                 Draw Work Corridor
-                         |
-                         v
-              Request Excavation Permit
-                         |
-                         v
-               AUTOMATIC SCREENING
-                         |
-       ---------------------------------------
-       |                  |                  |
-   Utilities           Projects           Road
-       |                  |                  |
-       ---------------------------------------
-                         |
-                         v
-                    Risk Score
-                         |
-                         v
-                Coordination Engine
-                         |
-                ------------------
-                |                |
-           Coordinate        No coordination
-                |                |
-                v                v
-        Common Window        Proceed Review
-                |
-                v
-         Notifications
-                |
-                v
-       Cross-Department Response
-                |
-        ---------------------
-        |         |         |
-      Accept    Modify    Reject
-        |         |         |
-        ------ Re-optimize -
-                |
-                v
-          Final Schedule
-                |
-                v
-         Excavation Execution
-                |
-                v
-         Field Verification
-                |
-                v
-            Restoration
-                |
-                v
-              Audit
-                |
-                v
-             Analytics
+High traffic
+Recently restored
+Multiple previous excavation events
 ```
 
-This is the full Dig Once lifecycle.
+## Existing underground infrastructure
+
+```text
+Water Supply
+Sewage
+Drainage
+Natural Gas
+Fibre Network
+```
+
+## Planned projects
+
+```text
+W-104
+Water replacement
+10–20 Sep
+
+S-48
+Sewer rehabilitation
+15–25 Sep
+
+F-32
+Fibre installation
+17–22 Sep
+```
+
+Optional:
+
+```text
+D-18
+Drainage maintenance
+18–21 Sep
+```
+
+Natural Gas should create either a proximity warning or a high-sensitivity conflict only if the synthetic geometry actually produces that relationship.
 
 ---
 
-# 24. The final competition story
-
-The judges should understand the product in this sequence:
-
-### Problem
+# 23. Winning Demo Flow
 
 ```text
-Different agencies plan infrastructure separately.
-```
-
-### Consequence
-
-```text
-Same road gets opened repeatedly.
-```
-
-### Current gap
-
-```text
-Existing maps show infrastructure,
-but planning systems do not coordinate the excavation decision.
-```
-
-### Dig Once
-
-```text
-Before excavation:
-    check utilities
-    check projects
-    check schedule
-    check road history
-    check risk
-```
-
-### Then
-
-```text
-detect
- -> score
- -> notify
- -> coordinate
- -> approve
- -> execute
- -> verify
-```
-
-### Outcome
-
-```text
-fewer excavation events
-fewer road closures
-less restoration
-lower estimated cost
-better interdepartmental coordination
-better infrastructure data
+Login as Water Admin
+        |
+        v
+Create Water project
+        |
+        v
+Draw Central Avenue corridor
+        |
+        v
+Request Excavation Permission
+        |
+        v
+Automatic Analysis
+        |
+        +----------------------------+
+        |                            |
+ Underground Networks          Planned Projects
+        |                            |
+ Water / Sewage / Fibre       S-48 / F-32 / D-18
+        |                            |
+        +-------------+--------------+
+                      |
+                      v
+                 Risk Score
+                      |
+                      v
+            Coordination Opportunity
+                      |
+                      v
+               Notify Departments
+                      |
+                      v
+            Joint Coordination Plan
+                      |
+                      v
+            Shared execution window
+                      |
+                      v
+                 Approvals
+                      |
+                      v
+                   Schedule
+                      |
+                      v
+            Show measurable impact
 ```
 
 ---
 
-# 25. The one feature that should define the hackathon
+# 24. Final Impact Screen
 
-Everything should ultimately feed one screen:
+End the demo with a clean comparison.
 
-## "Should this road be excavated now?"
+```text
+WITHOUT DIG ONCE
 
-That screen should answer:
+Water      -> excavation
+Sewage     -> excavation
+Fibre      -> excavation
+
+3 road openings
+3 restoration cycles
+3 disruption events
+```
+
+Then:
+
+```text
+WITH DIG ONCE
+
+1 coordinated road-opening window
+
+Potentially avoided:
+2 additional excavations
+2 additional restoration cycles
+2 additional disruption events
+```
+
+All financial figures must be calculated from synthetic/configured assumptions and clearly labeled as estimates.
+
+---
+
+# 25. What Not to Add
+
+Since the prototype has only five underground networks, avoid scope creep into:
+
+- Electrical network without data
+- additional utility types without data
+- citizen mobile app
+- IoT sensors
+- drone imagery
+- full road-damage computer vision
+- complex contractor marketplace
+- payment processing
+- huge predictive ML system
+- automated AI conversion of arbitrary paper maps into authoritative GIS
+
+The core product is already strong enough.
+
+---
+
+# 26. Priority Order for Development
+
+If time is limited, implement in exactly this order:
+
+```text
+1. Persisted departments/users/RBAC
+2. Five-network GIS data model
+3. Roads layer
+4. Project CRUD
+5. Map drawing
+6. Excavation footprint generation
+7. Five-network spatial conflict detection
+8. Project temporal conflict detection
+9. Conflict severity
+10. Excavation request
+11. Approval workflow
+12. Notifications
+13. Coordination groups
+14. Common execution window
+15. Department accept/reject/modify
+16. Impact calculation
+17. Road risk
+18. AI explanation
+19. Field verification
+20. Analytics
+21. File/map import
+22. AI digitization
+```
+
+Do not reverse this order.
+
+---
+
+# 27. Final Architecture
+
+```text
+                         REACT FRONTEND
+                              |
+       ------------------------------------------------
+       |          |          |          |             |
+      Map      Projects   Conflicts   Approval   Analytics
+       |          |          |          |             |
+       ---------------- REST / WebSocket ------------
+                              |
+                           FASTAPI
+                              |
+        --------------------------------------------------
+        |             |              |                  |
+       AUTH          GIS          PROJECTS          WORKFLOW
+        |             |              |                  |
+        |             |              |                  |
+        |        PostGIS queries     |         Coordination Engine
+        |             |              |                  |
+        ----------------------       --------------------
+                              |
+                       POSTGRESQL + POSTGIS
+                              |
+          ------------------------------------------------
+          |           |          |         |             |
+       Utilities    Roads     Projects  Conflicts    Permissions
+          |
+          +---------------------------------------------+
+                                                        |
+                           -------------------------------
+                           |                             |
+                     Risk/Optimization                 AI
+                           |                             |
+                   deterministic facts          explanation/drafting
+                           |
+                           v
+                    FINAL DECISION WORKFLOW
+```
+
+---
+
+# 28. Final Definition of the Product
+
+The final Dig Once Nagpur system should be able to answer four questions for every proposed excavation:
+
+## 1. What's underneath?
+
+```text
+Water
+Sewage
+Drainage
+Natural Gas
+Fibre
+```
+
+## 2. Who else is working here?
+
+```text
+Other departments' planned projects
+```
+
+## 3. Should we excavate now?
+
+```text
+Risk
+Road condition
+Utility conflicts
+Schedule conflicts
+```
+
+## 4. Can we coordinate?
+
+```text
+Compatible projects
+Shared execution window
+Department approvals
+Estimated impact
+```
+
+That is the complete product loop.
+
+---
+
+# 29. Immediate next implementation task
+
+Do **not** jump to AI or notifications yet.
+
+The next coding slice should be:
+
+```text
+CURRENT
+five GeoJSON network layers
+        |
+        v
+DEPARTMENTS + USERS
+        |
+        v
+UTILITIES TABLE
+        |
+        v
+ROADS TABLE
+        |
+        v
+PROJECTS TABLE
+        |
+        v
+CREATE PROJECT PAGE
+        |
+        v
+DRAW PROJECT CORRIDOR
+        |
+        v
+SAVE PROJECT
+```
+
+After that works end-to-end, immediately implement:
 
 ```text
 PROJECT
-    |
-    +-- Underground utilities affected
-    |
-    +-- Existing projects nearby
-    |
-    +-- Schedule overlap
-    |
-    +-- Road condition
-    |
-    +-- Road excavation history
-    |
-    +-- Conflict severity
-    |
-    +-- Coordination opportunities
-    |
-    +-- Estimated impact
-    |
-    +-- Recommended action
+   |
+   v
+EXCAVATION FOOTPRINT
+   |
+   v
+CHECK FIVE NETWORKS
+   |
+   v
+RETURN CONFLICTS
 ```
 
-And the decision should become:
-
-```text
-           SHOULD WE DIG?
-
-        [ COORDINATE ]   [ PROCEED ]
-```
-
-That is the product's true center.
+That is the first major milestone where Dig Once starts solving the actual problem rather than simply visualizing infrastructure.
 
 ---
 
-# 26. Final winning MVP
+# 30. Non-negotiable engineering principles
 
-If time becomes extremely constrained, stop at **Phase 4**, but make Phases 0–4 extremely polished.
-
-The absolute winning sequence is:
-
-```text
-LOGIN
-  |
-CITY GIS
-  |
-DEPARTMENT PROJECT
-  |
-DRAW CORRIDOR
-  |
-EXCAVATION REQUEST
-  |
-AUTOMATIC CONFLICT DETECTION
-  |
-SEVERITY
-  |
-COORDINATION OPPORTUNITY
-  |
-NOTIFICATION
-  |
-OTHER DEPARTMENT ACCEPTS
-  |
-FINAL COORDINATED WINDOW
-  |
-IMPACT:
-3 -> 1 EXCAVATIONS
-```
-
-That is enough to demonstrate the entire value proposition.
-
-Then Phase 5–9 make the same product better rather than changing the story.
+1. **The five underground networks are the complete utility scope for the current hackathon prototype.**
+2. **Roads are separate from underground utilities and exist because excavation occurs on roads.**
+3. **PostGIS performs spatial analysis.**
+4. **Deterministic backend rules calculate severity, compatibility, and coordination scores.**
+5. **AI explains and assists; it does not invent GIS facts.**
+6. **Departments can edit only their own network/project data, while still seeing enough information to coordinate.**
+7. **Project planning and excavation permission are separate workflows.**
+8. **Coordination means a shared execution window, not automatically a shared trench.**
+9. **Every conflict must have an explainable reason.**
+10. **Every important approval or change must be auditable.**
+11. **Synthetic data must be clearly labeled as synthetic.**
+12. **Field verification is the mechanism through which synthetic/imported GIS information can eventually become higher-confidence data.**
+13. **The final hackathon demo must use the five-network model exactly as implemented rather than claiming unsupported infrastructure types.**
 
 ---
 
-# 27. Final engineering rulebook
+# Final Product Statement
 
-Throughout implementation, keep these rules:
+> **Dig Once Nagpur is a geospatial excavation-permission and coordination platform built around five underground infrastructure networks — Water Supply, Sewage, Drainage, Natural Gas, and Fibre Network. Before an excavation is approved, it identifies affected underground assets, detects overlapping projects and schedules, scores risk, notifies affected departments, and proposes a coordinated execution window to reduce repeated road excavation, restoration effort, cost, and disruption.**
 
-### Rule 1
-**PostGIS calculates geography.**
-
-### Rule 2
-**Backend rules calculate feasibility and scores.**
-
-### Rule 3
-**AI explains and assists.**
-
-### Rule 4
-**Departments own their data, but coordination requires shared visibility.**
-
-### Rule 5
-**A project and an excavation permission are separate concepts.**
-
-### Rule 6
-**Same excavation window does not imply same trench.**
-
-### Rule 7
-**Low-confidence infrastructure data must be visibly labeled.**
-
-### Rule 8
-**Every important approval/change must be auditable.**
-
-### Rule 9
-**Synthetic data must be clearly identifiable as synthetic.**
-
-### Rule 10
-**One deterministic end-to-end demo is more valuable than ten unfinished features.**
-
----
-
-# 28. The final positioning
-
-Do not pitch Dig Once as:
-
-> "A GIS dashboard with AI."
-
-Pitch it as:
-
-> **Dig Once Nagpur is a spatial-temporal coordination and excavation-permission platform that sits above fragmented infrastructure data and prevents departments from independently opening the same roads.**
-
-And the strongest concise product statement is:
-
-> **Before a road is opened, know who else needs to open it.**
-
----
-
-# 29. Immediate implementation order from the current repository
-
-Because the repository already contains the GIS foundation, **do not spend time rebuilding Phase 0**.
-
-The immediate order should be:
-
-```text
-NOW
- |
- +--> refactor underground_networks into roads + utilities
- |
- +--> introduce departments + users tables
- |
- +--> replace demo-only auth with persisted users/RBAC
- |
- +--> create projects table
- |
- +--> create project CRUD APIs
- |
- +--> create project map drawing
- |
- +--> create project submission workflow
- |
- +--> build spatial conflict engine
- |
- +--> build temporal conflict engine
- |
- +--> create conflict UI
- |
- +--> create excavation_requests
- |
- +--> create approval workflow
- |
- +--> create notifications
- |
- +--> build coordination groups
- |
- +--> build common-window optimization
- |
- +--> add severity/risk
- |
- +--> add impact calculations
- |
- +--> add AI explanation
- |
- +--> add field verification
- |
- +--> add executive analytics
- |
- +--> harden demo
-```
-
-That is the implementation sequence the team should follow.
-
----
-
-# 30. Definition of victory
-
-The project is not "finished" when every feature in this document exists.
-
-It is finished when, in front of a judge, you can perform this sequence without explanation:
-
-```text
-1. A department wants to excavate.
-2. It draws the road segment.
-3. Dig Once checks underground infrastructure.
-4. Dig Once checks other planned projects.
-5. Dig Once checks the schedule.
-6. Dig Once evaluates road risk.
-7. Dig Once blocks/flags the excavation when coordination is needed.
-8. Other departments are notified automatically.
-9. Dig Once groups compatible work.
-10. The system proposes a common execution window.
-11. Departments approve the joint plan.
-12. The system calculates measurable impact.
-13. Field engineers later verify the actual infrastructure.
-14. The data improves.
-15. City leadership can see the whole picture.
-```
-
-The judges should finish the demonstration thinking:
-
-> **"This could actually change how a city plans road excavation."**
-
-That is the standard the implementation should be built toward.
+The map tells the city **what is underneath**.  
+The coordination engine tells the city **who else needs to work there**.  
+The permission workflow decides **whether the road should be opened now**.  
+The impact engine shows **what Dig Once prevented**.

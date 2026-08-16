@@ -1,6 +1,201 @@
 * {
   box-sizing: border-box;
 }
+.create-project-page {
+  max-width: 860px;
+}
+.workflow-steps {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 26px 0 0;
+}
+.workflow-steps span {
+  padding: 7px 10px;
+  border-radius: 16px;
+  background: #e6edf2;
+  color: #667789;
+  font-size: 11px;
+  font-weight: 650;
+}
+.workflow-steps .current {
+  background: #087e8b;
+  color: #fff;
+}
+.workflow-steps .complete {
+  background: #dcefed;
+  color: #087e8b;
+}
+.project-form select {
+  border: 1px solid #d7e0e7;
+  border-radius: 7px;
+  padding: 10px 11px;
+  font:
+    13px "Geist Variable",
+    sans-serif;
+  background: #fff;
+}
+.cost-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.map-draw-note {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  border-radius: 7px;
+  padding: 11px;
+  background: #edf8f8;
+  color: #23636a;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.corridor-map {
+  height: 340px;
+  border: 1px solid #d7e0e7;
+  border-radius: 8px;
+  overflow: hidden;
+  z-index: 0;
+}
+.corridor-actions,
+.workflow-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.corridor-actions span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #53748a;
+  font-size: 11px;
+}
+.corridor-actions button,
+.secondary-button,
+.text-button {
+  border: 0;
+  background: transparent;
+  color: #087e8b;
+  font:
+    650 12px "Geist Variable",
+    sans-serif;
+  cursor: pointer;
+}
+.secondary-button {
+  border: 1px solid #c9d9df;
+  border-radius: 7px;
+  padding: 10px 14px;
+}
+.primary-button {
+  border: 0;
+  background: #087e8b;
+  color: #fff;
+  border-radius: 7px;
+  padding: 10px 14px;
+  font: 650 12px "Geist Variable", sans-serif;
+  cursor: pointer;
+}
+.primary-button:hover:not(:disabled) {
+  background: #066c77;
+}
+.primary-button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+.workflow-actions {
+  justify-content: flex-end;
+}
+.workflow-actions .secondary-button {
+  margin-right: auto;
+}
+.draft-success {
+  background: #fff;
+  border: 1px solid #bfe0de;
+  border-radius: 10px;
+  padding: 28px;
+  margin-top: 28px;
+}
+.draft-success h2 {
+  margin: 0 0 8px;
+  font-size: 21px;
+}
+.draft-success p {
+  color: #65788a;
+  font-size: 13px;
+  margin: 0 0 18px;
+}
+.project-status {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+.analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin: 28px 0;
+}
+.analysis-grid article {
+  background: #fff;
+  border: 1px solid #dce6eb;
+  border-radius: 9px;
+  padding: 18px;
+  display: grid;
+  gap: 6px;
+}
+.analysis-grid small {
+  color: #718096;
+  font-size: 11px;
+}
+.analysis-grid strong {
+  font-size: 18px;
+  color: #087e8b;
+}
+.section-title {
+  font-size: 19px;
+  margin: 30px 0 0;
+}
+.response-panel { margin-top: 28px; background: #fff; border: 1px solid #dce6eb; border-radius: 10px; padding: 20px; }
+.response-panel h2 { margin-top: 0; font-size: 18px; }
+.response-panel textarea { width: 100%; min-height: 82px; border: 1px solid #d7e0e7; border-radius: 7px; padding: 10px; font: 13px "Geist Variable", sans-serif; }
+.date-pair { display: flex; gap: 14px; margin: 14px 0; }
+.date-pair label { display: grid; gap: 6px; font-size: 12px; color: #53748a; }
+.date-pair input { border: 1px solid #d7e0e7; border-radius: 7px; padding: 8px; }
+.project-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.project-actions .primary-button { display: inline-flex; align-items: center; text-decoration: none; }
+.coordination-analysis-summary { display: grid; gap: 5px; margin-top: 10px; padding: 10px; border-radius: 7px; background: #f3f8fa; color: #40576a; font-size: 12px; }
+.response-window { color: #087e8b; font-size: 12px; }.comment-thread { margin-top: 14px; border: 1px solid #dce6eb; border-radius: 10px; background: #fff; overflow: hidden; }.comment { padding: 14px 16px; border-bottom: 1px solid #edf2f5; }.comment > div { display: flex; gap: 8px; align-items: baseline; }.comment span { color: #718096; font-size: 11px; }.comment p { margin: 7px 0 0; color: #40576a; font-size: 13px; line-height: 1.45; }.comment-compose { display: grid; gap: 9px; padding: 14px; background: #f8fbfc; }.comment-compose textarea { min-height: 72px; border: 1px solid #d7e0e7; border-radius: 7px; padding: 9px; font: 13px "Geist Variable", sans-serif; }.comment-compose button { justify-self: end; }
+.coordination-analysis-summary > strong { color: #087e8b; font-size: 12px; }.coordination-analysis-summary > span { color: #263f52; font-weight: 700; font-size: 11px; }.coordination-analysis-summary p { margin: 0; line-height: 1.4; }.analysis-blocker { color: #b42318; }.analysis-warning { color: #9a6700; }.gemini-explanation { padding-top: 5px; border-top: 1px solid #dce6eb; color: #557084; font-style: italic; }
+.modal-backdrop { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(15, 35, 52, .56); }
+.modal-content { width: min(720px, 100%); max-height: min(780px, 90vh); overflow: auto; padding: 26px; border-radius: 12px; background: #fff; box-shadow: 0 24px 70px rgba(10, 33, 54, .25); }
+.modal-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding-bottom: 18px; border-bottom: 1px solid #e4edf1; }
+.modal-heading h2 { margin: 0; font-size: 23px; }
+.modal-heading .eyebrow { margin-bottom: 6px; }
+.detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 20px 0; }
+.detail-grid > div, .detail-description { padding: 12px; border: 1px solid #e1eaee; border-radius: 8px; background: #fbfdfe; }
+.detail-grid small, .detail-description small { display: block; margin-bottom: 5px; color: #718096; font-size: 10px; text-transform: uppercase; letter-spacing: .8px; }
+.detail-grid strong { display: block; color: #20364a; font-size: 13px; line-height: 1.4; }
+.detail-description p { margin: 0; color: #4a6172; font-size: 13px; line-height: 1.55; }
+.project-corridor-map { margin-top: 16px; padding: 12px; border: 1px solid #e1eaee; border-radius: 8px; background: #fbfdfe; }
+.project-corridor-map > small { display: block; margin-bottom: 8px; color: #718096; font-size: 10px; text-transform: uppercase; letter-spacing: .8px; }
+.project-corridor-map .leaflet-container { height: 230px; border-radius: 6px; z-index: 0; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.danger-button { border: 1px solid #e89999; border-radius: 7px; padding: 10px 14px; background: #fff; color: #b42318; font: 650 12px "Geist Variable", sans-serif; cursor: pointer; }
+.edit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 20px; }
+.edit-grid label { display: grid; gap: 6px; color: #496174; font-size: 12px; font-weight: 600; }
+.edit-grid input, .edit-grid select, .edit-grid textarea { width: 100%; border: 1px solid #d7e0e7; border-radius: 7px; padding: 9px 10px; font: 13px "Geist Variable", sans-serif; background: #fff; }
+.edit-grid textarea { min-height: 78px; resize: vertical; }.edit-grid .wide { grid-column: 1 / -1; }
+@media (max-width: 560px) { .edit-grid { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .detail-grid { grid-template-columns: 1fr; } .modal-content { padding: 20px; } }
+.back-link {
+  display: inline-block;
+  color: #087e8b;
+  text-decoration: none;
+  font-size: 13px;
+  margin-bottom: 25px;
+}
 .login-page {
   min-height: 100vh;
   display: grid;
@@ -752,7 +947,284 @@
   color: #17324d;
   font-family: "Geist Variable", sans-serif;
 }
-.top-nav{height:68px;background:#0b3260;color:#fff;display:flex;align-items:center;padding:0 28px;gap:36px;flex:none}.top-nav .brand{color:#fff;text-decoration:none;font-size:22px}.top-nav .brand-mark{width:34px;height:34px}.top-nav nav{display:flex;align-items:center;gap:6px;height:100%}.top-nav nav a{display:flex;align-items:center;gap:7px;text-decoration:none;color:#b9cce0;font-size:13px;padding:8px 11px;border-radius:6px}.top-nav nav a:hover,.top-nav nav a.active{color:#fff;background:#1b4a70}.top-nav nav .create-tab{background:#087e8b;color:#fff;margin-left:7px}.top-nav nav .create-tab:hover,.top-nav nav .create-tab.active{background:#0a6e78}.nav-user{margin-left:auto;display:flex;align-items:center;gap:13px;text-align:right}.nav-user div{display:grid;gap:2px}.nav-user b{font-size:12px}.nav-user small{font-size:10px;color:#a6c4db}.nav-user button{background:#1c4c73;color:#d3eaf9;border:0;border-radius:6px;padding:8px;cursor:pointer}.app-page{min-height:100vh;background:#f4f7fa;color:#17324d;font-family:'Geist Variable',sans-serif}.page-content{max-width:980px;margin:0 auto;padding:49px 30px}.page-content h1{font-size:36px;letter-spacing:-1.5px;margin:0 0 8px}.page-intro{margin:0;color:#728095;font-size:14px}.page-header{display:flex;justify-content:space-between;align-items:end;margin-bottom:26px}.page-header .page-intro{max-width:560px}.page-create,.submit-project{border:0;border-radius:7px;padding:11px 14px;background:#087e8b;color:#fff;text-decoration:none;font:650 13px 'Geist Variable',sans-serif;display:inline-flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap}.notification-list,.project-list{margin-top:28px;display:grid;gap:12px}.notification-card,.project-card{background:#fff;border:1px solid #e0e7ed;border-radius:9px;padding:18px;display:flex;gap:14px}.notice-icon{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;background:#e4f4fc;color:#287bb9;flex:none}.notice-icon.urgent{background:#fff0d8;color:#d98610}.notice-icon.info{background:#e5f6ef;color:#168a70}.notice-heading{display:flex;gap:14px;align-items:center}.notice-heading h3,.project-card h3{margin:0;font-size:14px}.notice-heading small{font-size:10px;color:#8b98a5}.notification-card p,.project-card p{font-size:12px;color:#6d7b8d;margin:6px 0}.location,.project-meta span{display:flex;align-items:center;gap:4px;color:#42718b;font-size:11px}.project-card{align-items:start}.project-code{color:#087e8b;font-size:11px;font-weight:bold;background:#e6f5f5;padding:7px;border-radius:5px}.project-body{flex:1}.project-meta{display:flex;gap:18px;margin-top:11px}.status-pill{text-transform:capitalize;font-size:10px;background:#fff0d8;color:#b77713;border-radius:12px;padding:4px 8px;white-space:nowrap}.empty-state{background:#fff;border:1px dashed #cdd8e1;border-radius:9px;padding:36px;color:#7c8b9b;text-align:center;font-size:13px}.form-page{max-width:720px}.project-form{background:#fff;border:1px solid #e0e7ed;border-radius:10px;padding:25px;margin-top:28px;display:grid;gap:17px}.project-form label{display:grid;gap:7px;font-size:12px;font-weight:650;color:#304058}.project-form input,.project-form textarea{border:1px solid #d7e0e7;border-radius:7px;padding:10px 11px;font:13px 'Geist Variable',sans-serif;resize:vertical}.location-picker>div{border:1px solid #c6e4e3;background:#f4fbfb;border-radius:7px;display:flex;align-items:center;padding-left:10px;color:#087e8b}.location-picker input{border:0;background:transparent;flex:1}.location-picker small{font-size:10px;color:#7c8998;font-weight:400}.date-fields{display:grid;grid-template-columns:1fr 1fr;gap:14px}.submit-project{justify-content:center;height:43px;margin-top:4px}
+.top-nav {
+  height: 68px;
+  background: #0b3260;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  padding: 0 28px;
+  gap: 36px;
+  flex: none;
+}
+.top-nav .brand {
+  color: #fff;
+  text-decoration: none;
+  font-size: 22px;
+}
+.top-nav .brand-mark {
+  width: 34px;
+  height: 34px;
+}
+.top-nav nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+}
+.top-nav nav a {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  text-decoration: none;
+  color: #b9cce0;
+  font-size: 13px;
+  padding: 8px 11px;
+  border-radius: 6px;
+}
+.top-nav nav a:hover,
+.top-nav nav a.active {
+  color: #fff;
+  background: #1b4a70;
+}
+.top-nav nav .create-tab {
+  background: #087e8b;
+  color: #fff;
+  margin-left: 7px;
+}
+.top-nav nav .create-tab:hover,
+.top-nav nav .create-tab.active {
+  background: #0a6e78;
+}
+.nav-user {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  text-align: right;
+}
+.nav-user div {
+  display: grid;
+  gap: 2px;
+}
+.nav-user b {
+  font-size: 12px;
+}
+.nav-user small {
+  font-size: 10px;
+  color: #a6c4db;
+}
+.nav-user button {
+  background: #1c4c73;
+  color: #d3eaf9;
+  border: 0;
+  border-radius: 6px;
+  padding: 8px;
+  cursor: pointer;
+}
+.app-page {
+  min-height: 100vh;
+  background: #f4f7fa;
+  color: #17324d;
+  font-family: "Geist Variable", sans-serif;
+}
+.page-content {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 49px 30px;
+}
+.page-content h1 {
+  font-size: 36px;
+  letter-spacing: -1.5px;
+  margin: 0 0 8px;
+}
+.page-intro {
+  margin: 0;
+  color: #728095;
+  font-size: 14px;
+}
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  margin-bottom: 26px;
+}
+.page-header .page-intro {
+  max-width: 560px;
+}
+.page-create,
+.submit-project {
+  border: 0;
+  border-radius: 7px;
+  padding: 11px 14px;
+  background: #087e8b;
+  color: #fff;
+  text-decoration: none;
+  font:
+    650 13px "Geist Variable",
+    sans-serif;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.notification-list,
+.project-list {
+  margin-top: 28px;
+  display: grid;
+  gap: 12px;
+}
+.notification-card,
+.project-card {
+  background: #fff;
+  border: 1px solid #e0e7ed;
+  border-radius: 9px;
+  padding: 18px;
+  display: flex;
+  gap: 14px;
+}
+.notice-icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: #e4f4fc;
+  color: #287bb9;
+  flex: none;
+}
+.notice-icon.urgent {
+  background: #fff0d8;
+  color: #d98610;
+}
+.notice-icon.info {
+  background: #e5f6ef;
+  color: #168a70;
+}
+.notice-heading {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+.notice-heading h3,
+.project-card h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.notice-heading small {
+  font-size: 10px;
+  color: #8b98a5;
+}
+.notification-card p,
+.project-card p {
+  font-size: 12px;
+  color: #6d7b8d;
+  margin: 6px 0;
+}
+.location,
+.project-meta span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #42718b;
+  font-size: 11px;
+}
+.project-card {
+  align-items: start;
+}
+.project-code {
+  color: #087e8b;
+  font-size: 11px;
+  font-weight: bold;
+  background: #e6f5f5;
+  padding: 7px;
+  border-radius: 5px;
+}
+.project-body {
+  flex: 1;
+}
+.project-meta {
+  display: flex;
+  gap: 18px;
+  margin-top: 11px;
+}
+.status-pill {
+  text-transform: capitalize;
+  font-size: 10px;
+  background: #fff0d8;
+  color: #b77713;
+  border-radius: 12px;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+.empty-state {
+  background: #fff;
+  border: 1px dashed #cdd8e1;
+  border-radius: 9px;
+  padding: 36px;
+  color: #7c8b9b;
+  text-align: center;
+  font-size: 13px;
+}
+.form-page {
+  max-width: 720px;
+}
+.project-form {
+  background: #fff;
+  border: 1px solid #e0e7ed;
+  border-radius: 10px;
+  padding: 25px;
+  margin-top: 28px;
+  display: grid;
+  gap: 17px;
+}
+.project-form label {
+  display: grid;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 650;
+  color: #304058;
+}
+.project-form input,
+.project-form textarea {
+  border: 1px solid #d7e0e7;
+  border-radius: 7px;
+  padding: 10px 11px;
+  font:
+    13px "Geist Variable",
+    sans-serif;
+  resize: vertical;
+}
+.location-picker > div {
+  border: 1px solid #c6e4e3;
+  background: #f4fbfb;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  padding-left: 10px;
+  color: #087e8b;
+}
+.location-picker input {
+  border: 0;
+  background: transparent;
+  flex: 1;
+}
+.location-picker small {
+  font-size: 10px;
+  color: #7c8998;
+  font-weight: 400;
+}
+.date-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.submit-project {
+  justify-content: center;
+  height: 43px;
+  margin-top: 4px;
+}
 .map-header {
   height: 68px;
   background: #0b3260;
