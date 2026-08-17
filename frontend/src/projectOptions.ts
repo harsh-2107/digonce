@@ -10,5 +10,5 @@ export const PROJECT_PRIORITIES = ["Planned", "Urgent", "Emergency"] as const;
 export const PROJECT_STATUSES = [
   "Draft", "Submitted", "In Review", "Under Review", "Coordination Required", "Approved",
   "Scheduled", "In Progress", "Restoration", "Verification", "Completed",
-  "Rejected", "Cancelled", "DISCARDED",
+  "DISCARDED",
 ] as const;

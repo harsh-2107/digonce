@@ -1113,6 +1113,8 @@ def list_projects(
     start_date_from: date | None = None,
     start_date_to: date | None = None,
     is_joint_project: bool | None = None,
+    departments: str | None = None,
+    ongoing: bool | None = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
     db=Depends(get_db),
@@ -1125,6 +1127,16 @@ def list_projects(
         query = query.filter(Project.is_joint_project == is_joint_project)
     if department:
         query = query.filter(Project.department_id == department)
+    if departments:
+        dept_list = [d.strip() for d in departments.split(",") if d.strip()]
+        if dept_list:
+            query = query.filter(Project.department_id.in_(dept_list))
+    if ongoing:
+        ongoing_statuses = [
+            "Submitted", "In Review", "Under Review", "Coordination Required",
+            "Approved", "Scheduled", "In Progress", "Ongoing", "Restoration", "Verification"
+        ]
+        query = query.filter(Project.status.in_(ongoing_statuses))
     if project_type:
         query = query.filter(Project.project_type == project_type)
     if urgency:
@@ -1165,6 +1177,117 @@ def list_projects(
         else:
             filtered.append(p)
     return [serialize_project_with_coordination(p, db) for p in filtered]
+
+@app.get("/projects/completed-near")
+def get_completed_projects_near(
+    lat: float,
+    lng: float,
+    radius: float = 50.0,
+    db=Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Find completed projects from all departments near a clicked location/road using PostGIS."""
+    # 1. Find nearest road / network line within 500m tolerance
+    road_query = text("""
+        SELECT 
+            id,
+            utility_type,
+            properties,
+            ST_Distance(
+                geometry::geography,
+                ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography
+            ) AS distance_m
+        FROM underground_networks
+        WHERE ST_DWithin(
+            geometry::geography,
+            ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography,
+            500
+        )
+        ORDER BY 
+            CASE WHEN utility_type = 'roads' THEN 0 ELSE 1 END,
+            distance_m ASC
+        LIMIT 1
+    """)
+    road_row = db.execute(road_query, {"lat": lat, "lng": lng}).fetchone()
+
+    nearest_road = {
+        "road_id": None,
+        "road_name": None,
+        "distance_from_click": None,
+    }
+
+    if road_row:
+        props = road_row.properties if isinstance(road_row.properties, dict) else {}
+        r_name = (
+            props.get("name")
+            or props.get("road_name")
+            or props.get("street")
+            or props.get("road")
+            or props.get("corridor")
+        )
+        if not r_name:
+            if road_row.utility_type == "roads":
+                r_name = "Nagpur Road Corridor"
+            else:
+                r_name = f"Nagpur {road_row.utility_type.replace('-', ' ').title()} Corridor"
+        
+        nearest_road = {
+            "road_id": str(road_row.id),
+            "road_name": r_name,
+            "distance_from_click": round(float(road_row.distance_m), 1),
+        }
+
+    # 2. Find completed projects within search radius
+    projects_query = text("""
+        SELECT 
+            p.*,
+            ST_Distance(
+                p.geometry::geography,
+                ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography
+            ) AS distance_m
+        FROM projects p
+        WHERE LOWER(p.status) = 'completed'
+          AND (
+              ST_DWithin(
+                  p.geometry::geography,
+                  ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography,
+                  :radius
+              )
+              OR (
+                  p.excavation_geometry IS NOT NULL AND
+                  ST_DWithin(
+                      p.excavation_geometry::geography,
+                      ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography,
+                      :radius
+                  )
+              )
+          )
+        ORDER BY p.end_date DESC NULLS LAST, p.created_at DESC
+    """)
+
+    project_rows = db.execute(projects_query, {"lat": lat, "lng": lng, "radius": radius}).fetchall()
+
+    project_ids = [row.project_id for row in project_rows]
+    projects_map = {}
+    if project_ids:
+        projects_objs = db.query(Project).filter(Project.project_id.in_(project_ids)).all()
+        projects_map = {p.project_id: p for p in projects_objs}
+
+    result_projects = []
+    for row in project_rows:
+        proj_obj = projects_map.get(row.project_id)
+        if proj_obj:
+            serialized = serialize_project(proj_obj)
+            serialized["distance_from_click_m"] = round(float(row.distance_m), 1)
+            serialized["completion_date"] = proj_obj.end_date or proj_obj.start_date
+            result_projects.append(serialized)
+
+    return {
+        "clicked_location": {"lat": lat, "lng": lng},
+        "search_radius_m": radius,
+        "nearest_road": nearest_road,
+        "projects": result_projects,
+    }
 
 @app.get("/projects/{project_id}")
 def get_project(

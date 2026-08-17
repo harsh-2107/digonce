@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { MapContainer, Polyline, TileLayer, useMap } from "react-leaflet";
+import { latLngBounds } from "leaflet";
 import { API_BASE, authHeaders, useAuth } from "@/context/AuthContext";
 import type { Project } from "@/context/ProjectsContext";
 import { TopNav } from "@/components/TopNav";
 import { ProjectDetailsModal } from "@/components/ProjectDetailsModal";
 import { EditProjectModal } from "@/components/EditProjectModal";
 import { useProjects } from "@/context/ProjectsContext";
+import "leaflet/dist/leaflet.css";
 import "@/App.css";
+
 
 type Coordination = {
   coordination_requests: { id: string; group_code: string; status: string; proposal_id: string | null; proposal_code: string | null; proposal_status: string | null; requesting_department: string | null; departments: string[]; is_incoming: boolean }[];
@@ -36,7 +40,19 @@ type NocStatus = {
   departments: NocDeptStatus[];
 };
 
+/** Inner component: auto-fits the Leaflet map to the project corridor */
+function ProjectMapFit({ coordinates }: { coordinates: [number, number][] }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!coordinates.length) return;
+    const bounds = latLngBounds(coordinates.map(([lat, lng]) => [lat, lng]));
+    if (bounds.isValid()) map.fitBounds(bounds, { padding: [40, 40] });
+  }, [coordinates, map]);
+  return null;
+}
+
 export function ProjectDetailsPage() {
+
   const { projectId } = useParams();
   const navigate = useNavigate();
   const { updateProject, deleteProject, discardProject } = useProjects();
@@ -60,7 +76,7 @@ export function ProjectDetailsPage() {
     fetch(`${API_BASE}/projects/${projectId}/noc`, { headers })
       .then((r) => r.json())
       .then((data) => setNocStatus(data))
-      .catch(() => {});
+      .catch(() => { });
   }
 
   useEffect(() => {
@@ -82,6 +98,9 @@ export function ProjectDetailsPage() {
     ])
       .then(
         async ([projectResponse, coordinationResponse, internalResponse, nocResponse]) => {
+          if (projectResponse.status === 404) {
+            throw new Error("Project not found");
+          }
           if (
             !projectResponse.ok ||
             !coordinationResponse.ok ||
@@ -176,7 +195,7 @@ export function ProjectDetailsPage() {
         fetch(`${API_BASE}/projects/${project.project_id}`, { headers: authHeaders() })
           .then((r) => r.ok && r.json())
           .then((p) => p && setProject(p))
-          .catch(() => {});
+          .catch(() => { });
       }
     } catch (err) {
       setNocError(err instanceof Error ? err.message : "Unable to give No Objection");
@@ -272,8 +291,9 @@ export function ProjectDetailsPage() {
         <Link className="back-link" to="/projects">
           ← Projects
         </Link>
-        {error && <p className="form-error">{error}</p>}
-        {!project ? (
+        {error ? (
+          <div className="empty-state">{error}</div>
+        ) : !project ? (
           <div className="empty-state">Loading project analysis…</div>
         ) : (
           <>
@@ -285,7 +305,66 @@ export function ProjectDetailsPage() {
             </p>
             <p className="page-intro">Owning department: {project.department?.replaceAll("-", " ") ?? "Not assigned"}</p>
 
+            {/* ── Project Location Map ── */}
+            <section className="project-location-section">
+              <h2 className="section-title">Project Location</h2>
+              {project.geometry?.type === "LineString" && project.geometry.coordinates?.length >= 2 ? (() => {
+                const coords = project.geometry.coordinates.map(
+                  (pt) => [pt[1], pt[0]] as [number, number]
+                );
+                // Compute a center for initial render before fitBounds fires
+                const midIdx = Math.floor(coords.length / 2);
+                const center = coords[midIdx] ?? [21.1458, 79.0882];
+                return (
+                  <div className="project-map-wrapper" style={{ height: "320px", borderRadius: "10px", overflow: "hidden", border: "1px solid #cbd5e1" }}>
+                    <MapContainer center={center} zoom={14} style={{ height: "100%", width: "100%" }}>
+                      <TileLayer
+                        attribution="&copy; OpenStreetMap contributors"
+                        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                      />
+                      <ProjectMapFit coordinates={coords} />
+                      <Polyline
+                        positions={coords}
+                        pathOptions={{ color: "#2563eb", weight: 6, opacity: 0.95 }}
+                      />
+                    </MapContainer>
+                  </div>
+                );
+              })() : (
+                <div className="empty-state" style={{ minHeight: "120px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  No project location available.
+                </div>
+              )}
+            </section>
+
+            {/* ── Project Description ── */}
+            <section style={{ marginBottom: "1.5rem" }}>
+              <h2 className="section-title">Project Description</h2>
+              {project.description ? (
+                <p style={{ color: "#334155", lineHeight: 1.7, marginTop: "0.5rem" }}>{project.description}</p>
+              ) : (
+                <p style={{ color: "#94a3b8", fontStyle: "italic" }}>No description provided.</p>
+              )}
+
+              {project.status !== "DISCARDED" && canManageProject && <div className="project-actions">
+              <button
+                className="secondary-button"
+                onClick={() => setEditingProject(project)}
+              >
+                Update project
+              </button>
+              <button
+                className="danger-button"
+                onClick={() => void removeProject()}
+              >
+                Delete permanently
+              </button>
+              <button className="secondary-button" onClick={() => void discardProjectRecord()}>Discard project</button>
+            </div>}
+            </section>
+
             {/* ── NOC Section ── */}
+
             {ownsProject && nocStatus && (
               <section className="noc-panel">
                 <h2 className="section-title">NOC Progress</h2>
@@ -303,8 +382,8 @@ export function ProjectDetailsPage() {
                         {dept.status === "NOC_GIVEN"
                           ? <span className="status-pill noc-given">No Objection ✓</span>
                           : dept.status === "NOC_WITHDRAWN"
-                          ? <span className="status-pill noc-withdrawn">Withdrawn</span>
-                          : <span className="status-pill noc-pending">Pending</span>
+                            ? <span className="status-pill noc-withdrawn">Withdrawn</span>
+                            : <span className="status-pill noc-pending">Pending</span>
                         }
                       </div>
                     )
@@ -366,70 +445,56 @@ export function ProjectDetailsPage() {
             <h2 className="section-title">Coordination requests</h2>
             {coordination?.coordination_requests?.length ? <div className="project-list">{coordination.coordination_requests.map((request) => <article className="project-card" key={request.id}><div className="project-body"><h3>{request.proposal_code ?? request.group_code}</h3><p>{request.requesting_department ? `${request.requesting_department.replaceAll("-", " ")} requested coordination` : "Coordination relationship"}</p><p>Departments: {request.departments.map((department) => department.replaceAll("-", " ")).join(", ")}</p>{canManageProject && request.is_incoming && request.proposal_id && request.proposal_status === "PENDING" && <Link className="primary-button" to={`/coordination/proposals/${request.proposal_id}`}>Review request</Link>}</div><span className="status-pill">{(request.proposal_status ?? request.status).replaceAll("_", " ")}</span></article>)}</div> : <div className="empty-state">No coordination requests are linked to this project.</div>}
             {proposalError && <p className="form-error">{proposalError}</p>}
-            {project.status !== "DISCARDED" && canManageProject && <div className="project-actions">
-              <button
-                className="secondary-button"
-                onClick={() => setEditingProject(project)}
-              >
-                Update project
-              </button>
-              <button
-                className="danger-button"
-                onClick={() => void removeProject()}
-              >
-                Delete permanently
-              </button>
-              <button className="secondary-button" onClick={() => void discardProjectRecord()}>Discard project</button>
-            </div>}
+            {/* $hi$ */}
             {project.status !== "DISCARDED" && canManageProject && <>
-            <h2 className="section-title">Internal project grouping</h2>
-            <p className="page-intro">
-              Projects from your department can be consolidated directly—no
-              proposal or inter-department response is needed.
-            </p>
-            {internalGroups.length ? (
-              <div className="project-list">
-                {internalGroups.map((item) => (
-                  <article className="project-card" key={item.project_id}>
-                    <div className="project-body">
-                      <h3>{item.project.project_name}</h3>
-                      <p>
-                        Shared corridor: {item.shared_corridor_m}m · Common
-                        window:{" "}
-                        {item.common_window_feasible
-                          ? "Available"
-                          : "Unavailable"}
-                      </p>
-                      <p>
-                        Grouping score: {item.grouping_score}/100 ·{" "}
-                        {item.recommendation.replaceAll("_", " ")}
-                      </p>
-                      <div className="project-actions">
-                        <button
-                          className="secondary-button"
-                          onClick={() => setDetailsModalProject(item.project)}
-                        >
-                          View details
-                        </button>
-                        <button
-                          className="primary-button"
-                          onClick={() => void group(item)}
-                        >
-                          Group projects
-                        </button>
+              <h2 className="section-title">Internal project grouping</h2>
+              <p className="page-intro">
+                Projects from your department can be consolidated directly—no
+                proposal or inter-department response is needed.
+              </p>
+              {internalGroups.length ? (
+                <div className="project-list">
+                  {internalGroups.map((item) => (
+                    <article className="project-card" key={item.project_id}>
+                      <div className="project-body">
+                        <h3>{item.project.project_name}</h3>
+                        <p>
+                          Shared corridor: {item.shared_corridor_m}m · Common
+                          window:{" "}
+                          {item.common_window_feasible
+                            ? "Available"
+                            : "Unavailable"}
+                        </p>
+                        <p>
+                          Grouping score: {item.grouping_score}/100 ·{" "}
+                          {item.recommendation.replaceAll("_", " ")}
+                        </p>
+                        <div className="project-actions">
+                          <button
+                            className="secondary-button"
+                            onClick={() => setDetailsModalProject(item.project)}
+                          >
+                            View details
+                          </button>
+                          <button
+                            className="primary-button"
+                            onClick={() => void group(item)}
+                          >
+                            Group projects
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                    <span className="status-pill">
-                      {item.grouping_level.replaceAll("_", " ")}
-                    </span>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <div className="empty-state">
-                No same-department grouping candidates are currently feasible.
-              </div>
-            )}
+                      <span className="status-pill">
+                        {item.grouping_level.replaceAll("_", " ")}
+                      </span>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-state">
+                  No same-department grouping candidates are currently feasible.
+                </div>
+              )}
             </>}
             <h2 className="section-title">Related / Coordinatable Projects</h2>
             <p className="page-intro">Potential project matches ranked by the existing Coordination Score.</p>
