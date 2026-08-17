@@ -131,6 +131,25 @@
   gap: 8px;
   justify-items: end;
 }
+.project-toolbar {
+  margin-top: 24px;
+  padding: 16px;
+  border: 1px solid #dce6eb;
+  border-radius: 9px;
+  background: #fff;
+}
+.project-toolbar-heading, .project-sort { display: flex; align-items: center; gap: 10px; }
+.project-toolbar-heading { justify-content: space-between; color: #20364a; font-size: 13px; }
+.project-filter-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+.project-filter-grid label { display: grid; gap: 6px; color: #53748a; font-size: 11px; font-weight: 650; }
+.project-filter-grid select, .project-filter-grid input, .project-sort select {
+  width: 100%; border: 1px solid #d7e0e7; border-radius: 7px; padding: 9px 10px; background: #fbfdfe;
+  color: #263f52; font: 13px "Geist Variable", sans-serif;
+}
+.project-sort { margin-top: 14px; justify-content: flex-end; color: #53748a; font-size: 12px; }
+.project-sort select { width: auto; min-width: 150px; }
+@media (max-width: 860px) { .project-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .project-filter-grid { grid-template-columns: 1fr; } .project-sort { align-items: stretch; flex-direction: column; } .project-sort select { width: 100%; } }
 .analysis-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -166,6 +185,33 @@
 .project-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .project-actions .primary-button { display: inline-flex; align-items: center; text-decoration: none; }
 .coordination-analysis-summary { display: grid; gap: 5px; margin-top: 10px; padding: 10px; border-radius: 7px; background: #f3f8fa; color: #40576a; font-size: 12px; }
+.coordination-overview { margin: 24px 0; }
+.coordination-requirements { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+.coordination-requirements article { padding: 13px; border: 1px solid #dce6eb; border-radius: 9px; background: #fff; }
+.coordination-requirements strong, .coordination-requirements span { display: block; }
+.coordination-requirements strong { color: #20364a; font-size: 13px; text-transform: capitalize; }
+.coordination-requirements span { margin-top: 5px; color: #087e8b; font-size: 11px; font-weight: 650; }
+.coordination-requirements p { margin: 7px 0 0; color: #6d7b8d; font-size: 12px; line-height: 1.4; }
+.request-coordination-panel { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 14px; padding: 14px; border: 1px solid #c9d9df; border-radius: 9px; background: #f3f8fa; }
+.request-coordination-panel strong { color: #20364a; font-size: 13px; }
+.request-coordination-panel p { margin: 5px 0 0; color: #557084; font-size: 12px; }
+@media (max-width: 560px) { .request-coordination-panel { align-items: stretch; flex-direction: column; } }
+/* NOC panel — owner view */
+.noc-panel { margin-top: 22px; padding: 18px; border: 1px solid #b9dcd0; border-radius: 10px; background: #f3faf8; }
+.noc-progress { font-size: 14px; margin: 0 0 14px; }
+.noc-all-clear { color: #138a70; font-weight: 700; }
+.noc-dept-list { display: grid; gap: 7px; }
+.noc-dept-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; border-radius: 7px; background: #fff; border: 1px solid #dde8e3; }
+.noc-dept-name { font-size: 13px; color: #263f52; text-transform: capitalize; }
+.status-pill.noc-given { background: #ddf4ee; color: #138a70; }
+.status-pill.noc-pending { background: #fff3d5; color: #9a6700; }
+.status-pill.noc-withdrawn { background: #fde8e8; color: #b42318; }
+/* NOC actions — non-owner view */
+.noc-actions-panel { margin-top: 18px; padding: 16px; border: 1px solid #c9d9df; border-radius: 9px; background: #f3f8fa; }
+.noc-coord-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+/* Notification action links */
+.notice-actions { display: flex; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
+@media (max-width: 760px) { .coordination-requirements { grid-template-columns: 1fr; } }
 .response-window { color: #087e8b; font-size: 12px; }.comment-thread { margin-top: 14px; border: 1px solid #dce6eb; border-radius: 10px; background: #fff; overflow: hidden; }.comment { padding: 14px 16px; border-bottom: 1px solid #edf2f5; }.comment > div { display: flex; gap: 8px; align-items: baseline; }.comment span { color: #718096; font-size: 11px; }.comment p { margin: 7px 0 0; color: #40576a; font-size: 13px; line-height: 1.45; }.comment-compose { display: grid; gap: 9px; padding: 14px; background: #f8fbfc; }.comment-compose textarea { min-height: 72px; border: 1px solid #d7e0e7; border-radius: 7px; padding: 9px; font: 13px "Geist Variable", sans-serif; }.comment-compose button { justify-self: end; }
 .coordination-analysis-summary > strong { color: #087e8b; font-size: 12px; }.coordination-analysis-summary > span { color: #263f52; font-weight: 700; font-size: 11px; }.coordination-analysis-summary p { margin: 0; line-height: 1.4; }.analysis-blocker { color: #b42318; }.analysis-warning { color: #9a6700; }.gemini-explanation { padding-top: 5px; border-top: 1px solid #dce6eb; color: #557084; font-style: italic; }
 .modal-backdrop { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(15, 35, 52, .56); }
@@ -986,6 +1032,21 @@
 .top-nav nav a.active {
   color: #fff;
   background: #1b4a70;
+}
+.nav-badge {
+  background: #e45151;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 10px;
+  margin-left: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
 }
 .top-nav nav .create-tab {
   background: #087e8b;

@@ -1,14 +1,55 @@
 import { useEffect, useState } from "react";
 import { Bell } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { API_BASE, authHeaders } from "@/context/AuthContext";
 import { TopNav } from "@/components/TopNav";
 import "@/App.css";
 
-type Notice = { id:string; title:string; message:string; created_at:string; read_at:string|null; proposal_id:string|null };
+type Notice = {
+  id: string;
+  title: string;
+  message: string;
+  created_at: string;
+  read_at: string | null;
+  proposal_id: string | null;
+  project_id: string | null;
+};
+
 export function NotificationsPage() {
-  const [notices,setNotices]=useState<Notice[]>([]);
-  useEffect(()=>{ fetch(`${API_BASE}/notifications`,{headers:authHeaders()}).then(r=>r.json()).then(setNotices).catch(()=>setNotices([])); },[]);
+  const navigate = useNavigate();
+  const [notices, setNotices] = useState<Notice[]>([]);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/notifications`, { headers: authHeaders() })
+      .then((r) => r.json())
+      .then((data) => {
+        setNotices(data);
+        // Automatically mark all unread notifications as read on opening the notifications page
+        fetch(`${API_BASE}/notifications/read-all`, {
+          method: "POST",
+          headers: authHeaders(),
+        })
+          .then(() => {
+            window.dispatchEvent(new Event("notificationsRead"));
+          })
+          .catch(() => {});
+      })
+      .catch(() => setNotices([]));
+  }, []);
+
+  function markReadAndNavigate(notice: Notice, to: string) {
+    // Mark notification as read (fire-and-forget) then navigate
+    fetch(`${API_BASE}/notifications/${notice.id}/read`, {
+      method: "POST",
+      headers: authHeaders(),
+    })
+      .then(() => {
+        window.dispatchEvent(new Event("notificationsRead"));
+      })
+      .catch(() => {});
+    navigate(to);
+  }
+
   return (
     <main className="app-page">
       <TopNav />
@@ -27,17 +68,30 @@ export function NotificationsPage() {
                 </span>
                 <div>
                   <div className="notice-heading">
-                    <h3>{notice.title}</h3><small>{new Date(notice.created_at).toLocaleDateString()}</small>
+                    <h3>{notice.title}</h3>
+                    <small>{new Date(notice.created_at).toLocaleString()}</small>
                   </div>
                   <p>{notice.message}</p>
-                  {notice.proposal_id && <Link className="text-button" to={`/coordination/proposals/${notice.proposal_id}`}>Review proposal</Link>}
+                  <div className="notice-actions">
+                    {notice.project_id && (
+                      <button
+                        className="text-button"
+                        onClick={() => markReadAndNavigate(notice, `/projects/${notice.project_id}`)}
+                      >
+                        View project →
+                      </button>
+                    )}
+                    {notice.proposal_id && (
+                      <Link className="text-button" to={`/coordination/proposals/${notice.proposal_id}`}>
+                        Review proposal →
+                      </Link>
+                    )}
+                  </div>
                 </div>
               </article>
             ))
           ) : (
-            <div className="empty-state">
-              No workflow notifications yet.
-            </div>
+            <div className="empty-state">No workflow notifications yet.</div>
           )}
         </div>
       </section>

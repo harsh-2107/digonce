@@ -6,6 +6,7 @@ import { ProjectsPage } from "@/pages/ProjectsPage";
 import { CreateProjectPage } from "@/pages/CreateProjectPage";
 import { ProjectDetailsPage } from "@/pages/ProjectDetailsPage";
 import { CoordinationPage } from "@/pages/CoordinationPage";
+import { OngoingProjectsPage } from "@/pages/OngoingProjectsPage";
 import { CoordinationProposalPage } from "@/pages/CoordinationProposalPage";
 import { ProjectGroupPage } from "@/pages/ProjectGroupPage";
 import { GisProvider } from "@/context/GisContext";
@@ -19,6 +20,7 @@ export default function App() {
         <Route path="/map" element={<GisProvider><MapPage /></GisProvider>} />
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
+        <Route path="/ongoing-projects" element={<GisProvider><OngoingProjectsPage /></GisProvider>} />
         <Route path="/projects/new" element={<GisProvider><CreateProjectPage /></GisProvider>} />
         <Route path="/projects/:projectId" element={<ProjectDetailsPage />} />
         <Route path="/projects/:projectId/analysis" element={<ProjectDetailsPage />} />

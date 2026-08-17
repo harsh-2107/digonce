@@ -70,6 +70,7 @@ class Project(Base):
     urgency = Column(String, default="Planned")
     department_id = Column(String)
     start_date = Column(Date)
+    duration = Column(String)
     end_date = Column(Date)
     estimated_cost = Column(Numeric(14, 2))
     excavation_cost = Column(Numeric(14, 2))
@@ -133,6 +134,7 @@ with engine.begin() as conn:
         ADD COLUMN IF NOT EXISTS excavation_width_m NUMERIC(10,2),
         ADD COLUMN IF NOT EXISTS excavation_depth_m NUMERIC(10,2),
         ADD COLUMN IF NOT EXISTS contractor_name VARCHAR,
+        ADD COLUMN IF NOT EXISTS duration VARCHAR,
         ADD COLUMN IF NOT EXISTS excavation_geometry geometry(GEOMETRY, 4326)
         , ADD COLUMN IF NOT EXISTS urgency VARCHAR DEFAULT 'Planned'
         , ADD COLUMN IF NOT EXISTS department_id VARCHAR
@@ -206,6 +208,22 @@ with engine.begin() as conn:
           id UUID PRIMARY KEY, group_id UUID NOT NULL REFERENCES coordination_groups(id) ON DELETE CASCADE,
           event_type VARCHAR NOT NULL, message TEXT, created_by VARCHAR NULL REFERENCES users(user_id), created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         );
+        CREATE TABLE IF NOT EXISTS project_noc (
+          id UUID PRIMARY KEY,
+          project_id UUID NOT NULL REFERENCES projects(project_id),
+          department VARCHAR NOT NULL,
+          given_by VARCHAR NOT NULL REFERENCES users(user_id),
+          comment TEXT,
+          status VARCHAR NOT NULL DEFAULT 'NOC_GIVEN',
+          given_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          withdrawn_at TIMESTAMPTZ NULL,
+          withdrawn_by VARCHAR NULL REFERENCES users(user_id),
+          UNIQUE(project_id, department)
+        );
+        ALTER TABLE project_noc ADD COLUMN IF NOT EXISTS status VARCHAR NOT NULL DEFAULT 'NOC_GIVEN';
+        ALTER TABLE project_noc ADD COLUMN IF NOT EXISTS withdrawn_at TIMESTAMPTZ NULL;
+        ALTER TABLE project_noc ADD COLUMN IF NOT EXISTS withdrawn_by VARCHAR NULL REFERENCES users(user_id);
+        CREATE INDEX IF NOT EXISTS project_noc_project_idx ON project_noc(project_id);
         CREATE INDEX IF NOT EXISTS coordination_comments_group_idx ON coordination_comments(group_id, created_at);
         CREATE INDEX IF NOT EXISTS project_conflicts_project_idx ON project_conflicts(project_id);
         CREATE INDEX IF NOT EXISTS notifications_recipient_idx ON notifications(recipient_user_id, read_at);
@@ -226,6 +244,14 @@ with engine.begin() as conn:
           role VARCHAR NOT NULL DEFAULT 'SECONDARY', added_at TIMESTAMPTZ NOT NULL DEFAULT now(), removed_at TIMESTAMPTZ NULL,
           PRIMARY KEY (group_id, project_id)
         );
+        CREATE TABLE IF NOT EXISTS project_status_history (
+          id UUID PRIMARY KEY, project_id UUID NOT NULL REFERENCES projects(project_id),
+          old_status VARCHAR NOT NULL, new_status VARCHAR NOT NULL,
+          changed_by VARCHAR NOT NULL REFERENCES users(user_id), reason TEXT,
+          changed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS project_status_history_project_idx
+          ON project_status_history(project_id, changed_at DESC);
     """))
 
     # --- Deduplication migration: clean up duplicate coordination groups ------
@@ -316,7 +342,23 @@ DEMO_USERS = {
     "drainage@digonce.gov.in": {"password": "drainage123", "name": "Drainage Admin", "department": "drainage", "role": "Drainage Department Admin"},
     "gas@digonce.gov.in": {"password": "gas123", "name": "Gas Admin", "department": "natural-gas", "role": "Natural Gas Department Admin"},
     "fibre@digonce.gov.in": {"password": "fibre123", "name": "Fibre Admin", "department": "fibre", "role": "Fibre Department Admin"},
+    "roads@digonce.gov.in": {"password": "roads123", "name": "Roads Admin", "department": "roads", "role": "Roads Department Admin"},
 }
+
+def parse_duration_days(duration_str: str | None) -> int:
+    if not duration_str:
+        return 7
+    import re
+    numbers = [int(n) for n in re.findall(r'\d+', str(duration_str))]
+    if not numbers:
+        return 7
+    max_num = max(numbers)
+    if "month" in str(duration_str).lower():
+        return max_num * 30
+    elif "week" in str(duration_str).lower():
+        return max_num * 7
+    else:
+        return max_num
 
 def seed_demo_users():
     db = SessionLocal()
@@ -369,6 +411,7 @@ def serialize_project(p: Project) -> dict:
         "project_type": p.project_type,
         "urgency": p.urgency,
         "start_date": p.start_date,
+        "duration": getattr(p, "duration", None),
         "end_date": p.end_date,
         "planned_start": p.start_date,
         "planned_end": p.end_date,
@@ -388,6 +431,169 @@ def serialize_project(p: Project) -> dict:
         "coordination_opportunity": p.coordination_opportunity or "Not calculated",
         "grouping_status": p.grouping_status or "NONE",
     }
+
+def is_project_owner(project: Project, user: User) -> bool:
+    """Project management follows the owning department, never mere visibility."""
+    return user.role == "Super Admin" or project.department_id == user.department
+
+# All non-admin department slugs known to the system (must stay in sync with DEMO_USERS)
+ALL_DEPARTMENTS = ["water", "sewage", "drainage", "natural-gas", "fibre"]
+
+def coordination_status_for_project(project_id: str, db) -> str:
+    row = db.execute(text("""SELECT g.status FROM coordination_groups g
+        JOIN coordination_group_projects gp ON gp.group_id = g.id
+        WHERE gp.project_id=:project AND g.status NOT IN ('BROKEN', 'COMPLETED')
+        ORDER BY g.updated_at DESC LIMIT 1"""), {"project": project_id}).scalar()
+    return row or "NOT_REQUESTED"
+
+def get_required_departments_for_project(project: Project, db) -> set[str]:
+    """
+    Returns the set of department slugs required to give NOC for this project.
+    Always includes all non-owner departments in ALL_DEPARTMENTS so that every
+    participating department (water, sewage, drainage, natural-gas, fibre)
+    tracks and provides NOC for cross-department clearance.
+    """
+    owner_dept = project.department_id or (
+        project.created_by_user.department
+        if hasattr(project, "created_by_user") and project.created_by_user
+        else None
+    ) or ""
+
+    return set(d for d in ALL_DEPARTMENTS if d != owner_dept)
+
+
+def are_all_required_nocs_given(project: Project, db) -> tuple[bool, set[str], set[str], set[str]]:
+    """
+    Checks if all required departments for the project have given NOC.
+    Returns (all_cleared, required_departments, given_departments, rejected_departments).
+    """
+    req_depts = get_required_departments_for_project(project, db)
+    if not req_depts:
+        return (True, set(), set(), set())
+
+    noc_rows = db.execute(
+        text("SELECT department, status FROM project_noc WHERE project_id=:pid"),
+        {"pid": str(project.project_id)}
+    ).mappings().all()
+    noc_map = {r["department"]: r["status"] for r in noc_rows}
+
+    review_rows = db.execute(
+        text("SELECT department, status, objection FROM project_reviews WHERE project_id=:pid"),
+        {"pid": str(project.project_id)}
+    ).mappings().all()
+    review_map = {r["department"]: r for r in review_rows}
+
+    given_depts = set()
+    rejected_depts = set()
+
+    for dept in req_depts:
+        noc_st = noc_map.get(dept)
+        rev = review_map.get(dept)
+
+        is_rejected = (noc_st in {"REJECTED", "Rejected"}) or (
+            rev and (rev["objection"] or rev["status"] in {"REJECTED", "Rejected"})
+        )
+        if is_rejected:
+            rejected_depts.add(dept)
+
+        is_given = (noc_st == "NOC_GIVEN") or (
+            rev and not rev["objection"] and rev["status"] in {"NOC_GIVEN", "Approved", "ACCEPTED", "ACCEPT"}
+        )
+        if is_given and not is_rejected:
+            given_depts.add(dept)
+
+    all_cleared = (len(given_depts) == len(req_depts)) and (len(rejected_depts) == 0)
+    return (all_cleared, req_depts, given_depts, rejected_depts)
+
+
+def check_and_trigger_automatic_approval(project: Project, db, current_user_id: str | None = None) -> bool:
+    """
+    If all required departments for a project have given NOC, automatically updates
+    the project status to 'Approved', records status history, audit log, and notifies creator.
+    """
+    if project.status in {"Approved", "Scheduled", "In Progress", "Ongoing", "Restoration", "Verification", "Completed", "Cancelled", "DISCARDED"}:
+        return False
+
+    all_cleared, req_depts, given_depts, rejected_depts = are_all_required_nocs_given(project, db)
+
+    if not all_cleared:
+        return False
+
+    old_status = project.status
+    project.status = "Approved"
+    project.updated_at = datetime.now(timezone.utc)
+    db.flush()
+
+    user_id = current_user_id or project.created_by
+    db.execute(text("""
+        INSERT INTO project_status_history (id, project_id, old_status, new_status, changed_by, reason)
+        VALUES (:id, :pid, :old_s, :new_s, :user, :reason)
+    """), {
+        "id": str(uuid.uuid4()),
+        "pid": str(project.project_id),
+        "old_s": old_status,
+        "new_s": "Approved",
+        "user": user_id,
+        "reason": "Automatically approved: all required departments gave NOC"
+    })
+
+    audit(db, user_id, "PROJECT_AUTOMATICALLY_APPROVED", "project", project.project_id, {
+        "old_status": old_status,
+        "new_status": "Approved",
+        "required_departments": list(sorted(req_depts))
+    })
+
+    owner_dept = project.department_id or (
+        project.created_by_user.department
+        if hasattr(project, "created_by_user") and project.created_by_user
+        else None
+    ) or ""
+    if owner_dept:
+        dept_names_str = ", ".join(d.replace("-", " ").title() for d in sorted(req_depts))
+        notify_department(
+            db, owner_dept, "PROJECT_AUTOMATICALLY_APPROVED",
+            "Project Automatically Approved",
+            f"All required departments ({dept_names_str}) have given No Objection. Project '{project.project_name}' has been automatically approved.",
+            project_id=str(project.project_id), action_required=False
+        )
+
+    db.commit()
+    db.refresh(project)
+    return True
+
+
+def noc_summary_for_project(project_id: str, owner_dept: str, db) -> dict:
+    """Return the count of NOC-given / total required non-owner departments for a project."""
+    project = db.query(Project).filter(Project.project_id == project_id).first()
+    if not project:
+        return {"given": 0, "total": 0, "all_cleared": False, "departments": []}
+
+    all_cleared, req_depts, given_depts, rejected_depts = are_all_required_nocs_given(project, db)
+
+    noc_rows = db.execute(
+        text("SELECT department, status FROM project_noc WHERE project_id=:pid"),
+        {"pid": project_id}
+    ).mappings().all()
+    status_map = {row["department"]: row["status"] for row in noc_rows}
+
+    dept_list = []
+    for d in sorted(req_depts):
+        dept_list.append({"department": d, "status": status_map.get(d, "PENDING")})
+
+    return {
+        "given": len(given_depts),
+        "total": len(req_depts),
+        "all_cleared": all_cleared,
+        "departments": dept_list,
+    }
+
+
+def serialize_project_with_coordination(p: Project, db) -> dict:
+    result = serialize_project(p)
+    result["coordination_status"] = coordination_status_for_project(str(p.project_id), db)
+    owner_dept = p.department_id or (p.created_by_user.department if hasattr(p, "created_by_user") and p.created_by_user else None)
+    result["noc_summary"] = noc_summary_for_project(str(p.project_id), owner_dept or "", db)
+    return result
 
 def serialize_infra(i: ProjectInfra) -> dict:
     return {
@@ -438,7 +644,8 @@ class ProjectCreate(BaseModel):
     project_type: str
     urgency: str = "Planned"
     start_date: date
-    end_date: date
+    duration: str | None = None
+    end_date: date | None = None
     estimated_cost: Decimal | None = None
     excavation_cost: Decimal | None = None
     restoration_cost: Decimal | None = None
@@ -457,6 +664,7 @@ class ProjectUpdate(BaseModel):
     project_type: str | None = None
     urgency: str | None = None
     start_date: date | None = None
+    duration: str | None = None
     end_date: date | None = None
     estimated_cost: Decimal | None = None
     excavation_cost: Decimal | None = None
@@ -468,6 +676,9 @@ class ProjectUpdate(BaseModel):
 
 class ProjectTransition(BaseModel):
     status: str
+
+class ProjectDiscard(BaseModel):
+    reason: str | None = None
 
 class DepartmentsCreate(BaseModel):
     departments: list[str]
@@ -527,6 +738,9 @@ class ProjectGroupUpdate(BaseModel):
 class GroupProjectAdd(BaseModel):
     project_id: str
 
+class NOCCreate(BaseModel):
+    comment: str | None = None
+
 class CoordinationCommentCreate(BaseModel):
     message: str
 
@@ -549,6 +763,9 @@ def health():
 @app.post("/auth/login", response_model=TokenResponse)
 def login(credentials: LoginRequest, db=Depends(get_db)):
     user = db.query(User).filter(User.email == credentials.email.lower()).first()
+    if not user and credentials.email.lower() in DEMO_USERS:
+        seed_demo_users()
+        user = db.query(User).filter(User.email == credentials.email.lower()).first()
     if not user or not verify_password(credentials.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
@@ -587,8 +804,24 @@ def me(current_user: User = Depends(get_current_user)):
 # --- Projects ---
 PROJECT_TYPES = {"New Installation", "Repair", "Replacement", "Maintenance", "Expansion / Extension", "Rehabilitation"}
 URGENCIES = {"Planned", "Urgent", "Emergency"}
-PROJECT_STATUSES = {"Draft", "Submitted", "Under Review", "Coordination Required", "Approved", "Scheduled", "In Progress", "Restoration", "Verification", "Completed", "Rejected", "Cancelled"}
-STATUS_TRANSITIONS = {"Draft": {"Submitted", "Cancelled"}, "Submitted": {"Under Review", "Rejected", "Cancelled"}, "Under Review": {"Coordination Required", "Approved", "Rejected"}, "Coordination Required": {"Approved", "Rejected"}, "Approved": {"Scheduled"}, "Scheduled": {"In Progress"}, "In Progress": {"Restoration"}, "Restoration": {"Verification"}, "Verification": {"Completed"}}
+PROJECT_STATUSES = {"Draft", "Submitted", "In Review", "Under Review", "Coordination Required", "Approved", "Scheduled", "In Progress", "Ongoing", "Restoration", "Verification", "Completed", "Rejected", "Cancelled", "DISCARDED"}
+STATUS_TRANSITIONS = {
+    "Draft": {"Submitted", "In Review", "Under Review", "Cancelled"},
+    "Submitted": {"In Review", "Under Review", "Rejected", "Cancelled"},
+    "In Review": {"Approved", "Rejected", "Coordination Required"},
+    "Under Review": {"Approved", "Rejected", "Coordination Required"},
+    "Coordination Required": {"Approved", "Rejected"},
+    "Approved": {"Scheduled", "In Progress", "Ongoing"},
+    "Scheduled": {"In Progress", "Ongoing"},
+    "In Progress": {"Restoration", "Completed"},
+    "Ongoing": {"Completed", "In Progress", "Restoration"},
+    "Restoration": {"Verification", "Completed"},
+    "Verification": {"Completed"},
+}
+
+def ensure_project_is_not_discarded(project: Project):
+    if project.status == "DISCARDED":
+        raise HTTPException(status_code=409, detail="Discarded projects are read-only and cannot re-enter the workflow")
 
 def ensure_project_payload(payload: ProjectCreate | ProjectUpdate):
     if getattr(payload, "project_type", None) and payload.project_type not in PROJECT_TYPES:
@@ -625,8 +858,16 @@ def coordination_candidates(project: Project, db):
     """Lightweight proximity screen run on submission; replace with full PostGIS analysis later."""
     return db.query(Project).filter(
         Project.project_id != project.project_id,
-        Project.status.notin_(["Cancelled", "Rejected"]),
+        Project.status.notin_(["Cancelled", "Rejected", "DISCARDED"]),
         func.ST_DWithin(Project.geometry, project.geometry, 0.001),
+    ).all()
+
+def coordinatable_project_candidates(project: Project, db):
+    """The 75 m candidate screen shared by submission analysis and project details."""
+    return db.query(Project).filter(
+        Project.project_id != project.project_id,
+        Project.status.notin_(["Cancelled", "Rejected", "DISCARDED"]),
+        func.ST_DWithin(func.ST_Transform(Project.geometry, 3857), func.ST_Transform(project.geometry, 3857), 75),
     ).all()
 
 def calculate_submission_analysis(project: Project, db):
@@ -667,7 +908,7 @@ def run_project_analysis(project: Project, db):
         FROM underground_networks WHERE utility_type <> 'roads'
         AND ST_DWithin(ST_Transform(geometry,3857), ST_Transform((SELECT geometry FROM projects WHERE project_id=:project),3857), 25)
     """), {"project": str(project.project_id)}).mappings().all()
-    project_rows = db.query(Project).filter(Project.project_id != project.project_id, Project.status.notin_(["Cancelled", "Rejected"]), func.ST_DWithin(func.ST_Transform(Project.geometry,3857), func.ST_Transform(project.geometry,3857), 75)).all()
+    project_rows = coordinatable_project_candidates(project, db)
     for row in utility_rows:
         severity = "CRITICAL" if row["distance_m"] < 2 and row["utility_type"] == "natural-gas" else "HIGH" if row["distance_m"] < 5 else "MEDIUM"
         db.execute(text("""INSERT INTO project_conflicts (id,project_id,utility_type,conflict_type,distance_m,reason,severity,factors)
@@ -821,6 +1062,13 @@ def create_project(
     current_user: User = Depends(get_current_user),
 ):
     ensure_project_payload(payload)
+    calc_duration = payload.duration
+    calc_end_date = payload.end_date
+    if not calc_end_date and payload.start_date:
+        parsed_days = parse_duration_days(calc_duration)
+        calc_end_date = payload.start_date + timedelta(days=parsed_days - 1)
+    calc_duration_days = (calc_end_date - payload.start_date).days + 1 if calc_end_date and payload.start_date else parse_duration_days(calc_duration)
+
     project = Project(
         project_name=payload.project_name,
         description=payload.description,
@@ -834,8 +1082,9 @@ def create_project(
         project_type=payload.project_type,
         urgency=payload.urgency,
         start_date=payload.start_date,
-        end_date=payload.end_date,
-        duration_days=(payload.end_date - payload.start_date).days + 1,
+        duration=payload.duration,
+        end_date=calc_end_date,
+        duration_days=calc_duration_days,
         estimated_cost=payload.estimated_cost,
         excavation_cost=payload.excavation_cost,
         restoration_cost=payload.restoration_cost,
@@ -849,7 +1098,7 @@ def create_project(
     set_excavation_footprint(project, payload.excavation_width_m)
     db.commit()
     db.refresh(project)
-    return serialize_project(project)
+    return serialize_project_with_coordination(project, db)
 
 @app.get("/projects")
 def list_projects(
@@ -857,6 +1106,12 @@ def list_projects(
     department: str | None = None,
     project_type: str | None = None,
     urgency: str | None = None,
+    coordination_required: bool | None = None,
+    risk_level: str | None = None,
+    grouping_status: str | None = None,
+    contractor_name: str | None = None,
+    start_date_from: date | None = None,
+    start_date_to: date | None = None,
     is_joint_project: bool | None = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
@@ -874,16 +1129,42 @@ def list_projects(
         query = query.filter(Project.project_type == project_type)
     if urgency:
         query = query.filter(Project.urgency == urgency)
+    if risk_level:
+        query = query.filter(Project.risk_level == risk_level)
+    if grouping_status:
+        query = query.filter(Project.grouping_status == grouping_status)
+    if contractor_name:
+        query = query.filter(Project.contractor_name == contractor_name)
+    if coordination_required is True:
+        query = query.filter(Project.status == "Coordination Required")
+    elif coordination_required is False:
+        query = query.filter(Project.status != "Coordination Required")
+    if start_date_from:
+        query = query.filter(Project.start_date >= start_date_from)
+    if start_date_to:
+        query = query.filter(Project.start_date <= start_date_to)
  
     sort_columns = {
         "created_at": Project.created_at,
         "project_name": Project.project_name,
         "status": Project.status,
+        "start_date": Project.start_date,
+        "end_date": Project.end_date,
+        "urgency": Project.urgency,
     }
     sort_col = sort_columns.get(sort_by, Project.created_at)
     query = query.order_by(sort_col.desc() if sort_order == "desc" else sort_col.asc())
  
-    return [serialize_project(p) for p in query.all()]
+    projects = query.all()
+    filtered = []
+    for p in projects:
+        if p.status == "Draft":
+            owner_dept = p.department_id or (p.created_by_user.department if hasattr(p, "created_by_user") and p.created_by_user else None)
+            if current_user.role == "Super Admin" or owner_dept == current_user.department:
+                filtered.append(p)
+        else:
+            filtered.append(p)
+    return [serialize_project_with_coordination(p, db) for p in filtered]
 
 @app.get("/projects/{project_id}")
 def get_project(
@@ -894,7 +1175,9 @@ def get_project(
     project = db.query(Project).filter(Project.project_id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    return serialize_project(project)
+    if project.status == "Draft" and not is_project_owner(project, current_user):
+        raise HTTPException(status_code=403, detail="Draft projects can only be viewed by the creating department")
+    return serialize_project_with_coordination(project, db)
 
 @app.patch("/projects/{project_id}")
 @app.put("/projects/{project_id}", include_in_schema=False)
@@ -907,43 +1190,78 @@ def update_project(
     project = db.query(Project).filter(Project.project_id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    if project.created_by != current_user.user_id and current_user.role != "Super Admin":
-        raise HTTPException(status_code=403, detail="Only the project creator or an Admin can update this project")
+    ensure_project_is_not_discarded(project)
+    if not is_project_owner(project, current_user):
+        raise HTTPException(status_code=403, detail="Only the owning department or City Admin can update this project")
  
     ensure_project_payload(payload)
     if payload.project_name is not None:
         project.project_name = payload.project_name
     if payload.description is not None:
         project.description = payload.description
-    if payload.status is not None:
-        raise HTTPException(status_code=422, detail="Use the submit or cancel endpoint for status changes")
+    if payload.status is not None and payload.status != project.status:
+        allowed_operational = {"Approved", "In Progress", "Restoration", "Verification", "Completed"}
+        if payload.status == "Approved":
+            all_cleared, _, _, _ = are_all_required_nocs_given(project, db)
+            if not all_cleared:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Cannot manually set project status to Approved. Awaiting NOCs from required departments."
+                )
+            project.status = "Approved"
+        elif payload.status in allowed_operational:
+            if project.status not in allowed_operational and project.status not in {"Approved", "Scheduled", "Ongoing"}:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Cannot transition project status from '{project.status}' to '{payload.status}' until project is Approved."
+                )
+            old_s = project.status
+            project.status = payload.status
+            db.execute(text("""
+                INSERT INTO project_status_history (id, project_id, old_status, new_status, changed_by, reason)
+                VALUES (:id, :pid, :old_s, :new_s, :user, :reason)
+            """), {
+                "id": str(uuid.uuid4()), "pid": str(project.project_id),
+                "old_s": old_s, "new_s": payload.status,
+                "user": current_user.user_id, "reason": "Operational status update by project owner"
+            })
+            audit(db, current_user.user_id, "PROJECT_STATUS_UPDATED", "project", project.project_id, {"old_status": old_s, "new_status": payload.status})
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Status '{payload.status}' cannot be manually set via update project"
+            )
     if payload.is_joint_project is not None:
         project.is_joint_project = payload.is_joint_project
     if payload.geometry is not None:
         project.geometry = geojson_to_geom(payload.geometry)
-    for field in ("project_type", "urgency", "start_date", "end_date", "estimated_cost", "excavation_cost", "restoration_cost", "traffic_management_cost", "excavation_width_m", "excavation_depth_m", "contractor_name"):
+    for field in ("project_type", "urgency", "start_date", "duration", "end_date", "estimated_cost", "excavation_cost", "restoration_cost", "traffic_management_cost", "excavation_width_m", "excavation_depth_m", "contractor_name"):
         value = getattr(payload, field)
         if value is not None:
             setattr(project, field, value)
     if payload.geometry is not None or payload.excavation_width_m is not None:
         set_excavation_footprint(project, project.excavation_width_m)
-    if project.start_date and project.end_date:
-        project.duration_days = (project.end_date - project.start_date).days + 1
+    if project.start_date:
+        if getattr(payload, "duration", None) or not project.end_date:
+            parsed_days = parse_duration_days(getattr(project, "duration", None))
+            project.end_date = project.start_date + timedelta(days=parsed_days - 1)
+        if project.end_date:
+            project.duration_days = (project.end_date - project.start_date).days + 1
     project.updated_at = datetime.now(timezone.utc)
     db.flush()
     db.refresh(project)
     
     # A change to an existing corridor, date, or excavation parameter requires
-    # fresh screening before it can continue in the review workflow.
-    if project.status != "Draft":
+    # fresh screening before it can continue in the review workflow, unless already approved.
+    if project.status not in {"Draft", "Approved", "Scheduled", "In Progress", "Ongoing", "Restoration", "Verification", "Completed", "Cancelled", "DISCARDED"}:
         opportunities = run_project_analysis(project, db)
-        project.status = "Coordination Required" if opportunities else "Under Review"
+        project.status = "In Review"
         invalidate_coordination_for_project(project, db, current_user.user_id)
     audit(db, current_user.user_id, "PROJECT_UPDATED", "project", project.project_id)
  
     db.commit()
     db.refresh(project)
-    return serialize_project(project)
+    return serialize_project_with_coordination(project, db)
 
 @app.delete("/projects/{project_id}")
 def delete_project(
@@ -954,7 +1272,8 @@ def delete_project(
     project = db.query(Project).filter(Project.project_id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    if project.department_id != current_user.department and current_user.role != "Super Admin":
+    ensure_project_is_not_discarded(project)
+    if not is_project_owner(project, current_user):
         raise HTTPException(status_code=403, detail="Only the owning department or City Admin can delete this project")
     # Permanent deletion is explicitly user-requested. Remove every dependent
     # workflow record first so no foreign-key reference silently keeps it alive.
@@ -970,44 +1289,149 @@ def delete_project(
     db.execute(text("DELETE FROM project_infra WHERE project_id=:id"), {"id": project_id})
     db.execute(text("DELETE FROM project_departments WHERE project_id=:id"), {"id": project_id})
     db.execute(text("DELETE FROM project_reviews WHERE project_id=:id"), {"id": project_id})
-    audit(db, current_user.user_id, "PROJECT_DELETED", "project", project.project_id, {"project_name": project.project_name})
-    db.delete(project)
-    db.commit()
+    db.execute(text("DELETE FROM project_noc WHERE project_id=:id"), {"id": project_id})
+    # Delete is permanent, so its corresponding status-history records are
+    # intentionally removed as well. Use /discard to retain the full history.
+    db.execute(text("DELETE FROM project_status_history WHERE project_id=:id"), {"id": project_id})
+    # A permanent deletion removes project-specific audit/history as well; the
+    # project must leave no records behind in the Projects section.
+    db.execute(text("DELETE FROM audit_logs WHERE entity_type='project' AND entity_id=:id"), {"id": str(project.project_id)})
+    try:
+        db.delete(project)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     return {"deleted": True, "project_id": project_id}
+
+@app.post("/projects/{project_id}/discard")
+def discard_project(
+    project_id: str,
+    payload: ProjectDiscard,
+    db=Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Soft-delete a project while preserving its workflow and audit record."""
+    project = db.query(Project).filter(Project.project_id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not is_project_owner(project, current_user):
+        raise HTTPException(status_code=403, detail="Only the owning department or City Admin can discard this project")
+    if project.status in {"Completed", "Rejected", "Cancelled", "DISCARDED"}:
+        raise HTTPException(status_code=409, detail="This project is already in a terminal state and cannot be discarded")
+    old_status = project.status
+    project.status = "DISCARDED"
+    project.updated_at = datetime.now(timezone.utc)
+    db.execute(text("""INSERT INTO project_status_history
+        (id, project_id, old_status, new_status, changed_by, reason)
+        VALUES (:id, :project_id, :old_status, :new_status, :changed_by, :reason)"""), {
+            "id": str(uuid.uuid4()), "project_id": str(project.project_id),
+            "old_status": old_status, "new_status": "DISCARDED",
+            "changed_by": current_user.user_id, "reason": payload.reason,
+        })
+    audit(db, current_user.user_id, "PROJECT_DISCARDED", "project", project.project_id,
+          {"old_status": old_status, "reason": payload.reason})
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    db.refresh(project)
+    return serialize_project_with_coordination(project, db)
 
 @app.post("/projects/{project_id}/submit")
 def submit_project(project_id: str, db=Depends(get_db), current_user: User = Depends(get_current_user)):
     project = db.query(Project).filter(Project.project_id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    if project.created_by != current_user.user_id and current_user.role != "Super Admin":
+    ensure_project_is_not_discarded(project)
+    if not is_project_owner(project, current_user):
         raise HTTPException(status_code=403, detail="Only the project creator or City Admin can submit this project")
     if project.status != "Draft":
         raise HTTPException(status_code=409, detail="Only a draft project can be submitted")
     opportunities = run_project_analysis(project, db)
-    project.status = "Coordination Required" if opportunities else "Under Review"
+    project.status = "In Review"
     project.updated_at = datetime.now(timezone.utc)
-    audit(db, current_user.user_id, "PROJECT_SUBMITTED", "project", project.project_id, {"opportunities": len(opportunities)})
+    owner_dept = project.department_id or current_user.department
+    for dept in ALL_DEPARTMENTS:
+        if dept != owner_dept:
+            notify_department(
+                db, dept, "NOC_REVIEW_REQUIRED",
+                "New project requires your No Objection",
+                f"{(owner_dept or 'A department').replace('-', ' ').title()} submitted project '{project.project_name}'. Please review and give No Objection.",
+                project_id=str(project.project_id), action_required=True
+            )
     db.commit()
     db.refresh(project)
-    return serialize_project(project)
+    return serialize_project_with_coordination(project, db)
 
 @app.get("/projects/{project_id}/coordination")
 def project_coordination(project_id: str, include_explanation: bool = False, db=Depends(get_db), current_user: User = Depends(get_current_user)):
     project = db.query(Project).filter(Project.project_id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    if project.status == "Draft":
-        return {"risk_level": "Not calculated", "coordination_opportunity": "Not calculated", "projects": []}
-    rows = db.execute(text("SELECT other_project_id, factors FROM project_conflicts WHERE project_id=:id AND other_project_id IS NOT NULL AND status='OPEN'"), {"id": str(project.project_id)}).mappings().all()
+    utility_departments = {
+        "roads": "roads", "water": "water", "sewage": "sewage", "drainage": "drainage",
+        "natural-gas": "natural-gas", "fibre": "fibre", "electricity": "electricity", "traffic": "roads",
+    }
+    conflict_rows = db.execute(text("""SELECT utility_type, conflict_type, severity, reason
+      FROM project_conflicts WHERE project_id=:id AND status='OPEN' ORDER BY severity, utility_type"""),
+      {"id": str(project.project_id)}).mappings().all()
+    requirements = []
+    seen_requirements = set()
+    for row in conflict_rows:
+        utility = row["utility_type"] or ("project" if row["conflict_type"] == "PROJECT_SPATIAL" else None)
+        if not utility or utility in seen_requirements:
+            continue
+        seen_requirements.add(utility)
+        requirements.append({"infrastructure": utility, "department": utility_departments.get(utility),
+                             "severity": row["severity"], "reason": row["reason"]})
+    for infra in db.query(ProjectInfra).filter(ProjectInfra.project_id == project.project_id).all():
+        key = f"{infra.infra_type}:{infra.department or ''}"
+        if key not in seen_requirements:
+            seen_requirements.add(key)
+            requirements.append({"infrastructure": infra.infra_type, "department": infra.department,
+                                 "severity": "REVIEW", "reason": f"Project infrastructure: {infra.name}"})
+    for department in db.query(ProjectDepartment.department).filter(ProjectDepartment.project_id == project.project_id).all():
+        key = f"department:{department[0]}"
+        if key not in seen_requirements:
+            seen_requirements.add(key)
+            requirements.append({"infrastructure": "Department review", "department": department[0],
+                                 "severity": "REVIEW", "reason": "Department identified for project review"})
+
+    groups = db.execute(text("""SELECT g.id, g.group_code, g.status, g.updated_at,
+      cp.id AS proposal_id, cp.proposal_code, cp.status AS proposal_status,
+      COALESCE(proposer.department, creator.department) AS requesting_department
+      , (SELECT array_agg(DISTINCT member.department_id) FROM coordination_group_projects member_gp
+          JOIN projects member ON member.project_id=member_gp.project_id WHERE member_gp.group_id=g.id) AS departments
+      FROM coordination_groups g JOIN coordination_group_projects gp ON gp.group_id=g.id
+      LEFT JOIN LATERAL (SELECT * FROM coordination_proposals WHERE group_id=g.id ORDER BY created_at DESC LIMIT 1) cp ON TRUE
+      LEFT JOIN users proposer ON proposer.user_id=cp.created_by
+      LEFT JOIN users creator ON creator.user_id=g.created_by
+      WHERE gp.project_id=:id ORDER BY g.updated_at DESC"""), {"id": str(project.project_id)}).mappings().all()
+    coordination_requests = []
+    for group in groups:
+        item = dict(group)
+        item["departments"] = list(dict.fromkeys((item["departments"] or []) + ([item["requesting_department"]] if item["requesting_department"] else [])))
+        item["is_incoming"] = item["requesting_department"] not in {None, project.department_id}
+        coordination_requests.append(item)
+    # Use the exact 75 m match and deterministic pair score used by submission
+    # analysis. This is read-only; details never create a second scoring model.
     candidates = []
-    for row in rows:
-        candidate = db.query(Project).filter(Project.project_id == row["other_project_id"]).first()
-        if candidate and candidate.department_id != project.department_id:
-            item = serialize_project(candidate)
-            item["analysis"] = coordination_pair_analysis(project, candidate, db, include_explanation)
+    if project.status != "Draft":
+        for candidate in coordinatable_project_candidates(project, db):
+            analysis = coordination_pair_analysis(project, candidate, db, include_explanation)
+            if analysis["recommendation"] not in {"COORDINATE", "REVIEW"}:
+                continue
+            item = serialize_project_with_coordination(candidate, db)
+            item["analysis"] = analysis
             candidates.append(item)
-    return {"risk_level": project.risk_level or "Not calculated", "coordination_opportunity": project.coordination_opportunity or "Not calculated", "projects": candidates}
+    candidates.sort(key=lambda item: item["analysis"]["coordination_score"]["score"], reverse=True)
+    if project.status == "Draft":
+        return {"risk_level": "Not calculated", "coordination_opportunity": "Not calculated", "projects": [], "related_projects": [],
+                "requirements": requirements, "coordination_requests": coordination_requests}
+    return {"risk_level": project.risk_level or "Not calculated", "coordination_opportunity": project.coordination_opportunity or "Not calculated", "projects": candidates,
+            "requirements": requirements, "coordination_requests": coordination_requests, "related_projects": candidates}
 
 @app.get("/projects/{project_id}/coordination-opportunities/{candidate_project_id}")
 def project_pair_coordination(project_id: str, candidate_project_id: str, include_explanation: bool = True, db=Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -1021,10 +1445,11 @@ def project_pair_coordination(project_id: str, candidate_project_id: str, includ
 def analyze_project(project_id: str, db=Depends(get_db), current_user: User = Depends(get_current_user)):
     project = db.query(Project).filter(Project.project_id == project_id).first()
     if not project: raise HTTPException(status_code=404, detail="Project not found")
-    if project.created_by != current_user.user_id and current_user.role != "Super Admin":
+    ensure_project_is_not_discarded(project)
+    if not is_project_owner(project, current_user):
         raise HTTPException(status_code=403, detail="Only the owning department can run analysis")
     opportunities = run_project_analysis(project, db); db.commit()
-    return {"project": serialize_project(project), "opportunities": len(opportunities)}
+    return {"project": serialize_project_with_coordination(project, db), "opportunities": len(opportunities)}
 
 @app.get("/projects/{project_id}/conflicts")
 def project_conflicts(project_id: str, db=Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -1045,10 +1470,21 @@ def transition_project(project_id: str, payload: ProjectTransition, db=Depends(g
     project = db.query(Project).filter(Project.project_id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    if current_user.role != "Super Admin":
-        raise HTTPException(status_code=403, detail="Only City Admin can progress workflow states")
+    ensure_project_is_not_discarded(project)
+    if not is_project_owner(project, current_user):
+        raise HTTPException(status_code=403, detail="Only the owning department or City Admin can progress workflow states")
     if payload.status not in PROJECT_STATUSES or payload.status not in STATUS_TRANSITIONS.get(project.status, set()):
         raise HTTPException(status_code=409, detail=f"Invalid transition from {project.status} to {payload.status}")
+    # Enforce NOC gate: every required department must have status='NOC_GIVEN'
+    if payload.status == "Approved":
+        all_cleared, req_depts, given_depts, rejected_depts = are_all_required_nocs_given(project, db)
+        if not all_cleared:
+            pending = req_depts - given_depts
+            pending_list = ", ".join(sorted(pending)) if pending else "some departments"
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot approve: No Objection is still pending/rejected from: {pending_list}. All required departments must give NOC before a project can be approved."
+            )
     project.status = payload.status
     project.updated_at = datetime.now(timezone.utc)
     db.flush()
@@ -1058,22 +1494,34 @@ def transition_project(project_id: str, payload: ProjectTransition, db=Depends(g
         for gid in group_ids:
             _auto_complete_group_if_done(gid, db)
     db.commit(); db.refresh(project)
-    return serialize_project(project)
+    return serialize_project_with_coordination(project, db)
+
+@app.get("/projects/{project_id}/status-history")
+def get_status_history(project_id: str, db=Depends(get_db), current_user: User = Depends(get_current_user)):
+    project = db.query(Project).filter(Project.project_id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    rows = db.execute(
+        text("SELECT id, project_id, old_status, new_status, changed_by, changed_at, reason FROM project_status_history WHERE project_id=:pid ORDER BY changed_at DESC"),
+        {"pid": project_id}
+    ).mappings().all()
+    return [dict(r) for r in rows]
 
 @app.post("/projects/{project_id}/cancel")
 def cancel_project(project_id: str, db=Depends(get_db), current_user: User = Depends(get_current_user)):
     project = db.query(Project).filter(Project.project_id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    if project.created_by != current_user.user_id and current_user.role != "Super Admin":
-        raise HTTPException(status_code=403, detail="Only the project creator or City Admin can cancel this project")
+    ensure_project_is_not_discarded(project)
+    if not is_project_owner(project, current_user):
+        raise HTTPException(status_code=403, detail="Only the owning department or City Admin can cancel this project")
     if project.status not in {"Draft", "Submitted"}:
         raise HTTPException(status_code=409, detail="This project can no longer be cancelled")
     project.status = "Cancelled"
     project.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(project)
-    return serialize_project(project)
+    return serialize_project_with_coordination(project, db)
 
 @app.post("/projects/{project_id}/departments")
 def add_departments(
@@ -1085,6 +1533,9 @@ def add_departments(
     project = db.query(Project).filter(Project.project_id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_is_not_discarded(project)
+    if not is_project_owner(project, current_user):
+        raise HTTPException(status_code=403, detail="Only the owning department can manage project departments")
  
     rows = [ProjectDepartment(project_id=project_id, department=d) for d in payload.departments]
     db.add_all(rows)
@@ -1110,6 +1561,9 @@ def add_infra(
     project = db.query(Project).filter(Project.project_id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_is_not_discarded(project)
+    if not is_project_owner(project, current_user):
+        raise HTTPException(status_code=403, detail="Only the owning department can manage project infrastructure")
  
     infra = ProjectInfra(
         project_id=project_id,
@@ -1158,6 +1612,9 @@ def add_review(
     project = db.query(Project).filter(Project.project_id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_is_not_discarded(project)
+    if payload.department != current_user.department and current_user.role != "Super Admin":
+        raise HTTPException(status_code=403, detail="A department may only submit its own review")
  
     now = datetime.now(timezone.utc)
     review = ProjectReview(
@@ -1171,6 +1628,7 @@ def add_review(
         updated_at=now,
     )
     db.add(review)
+    check_and_trigger_automatic_approval(project, db, current_user.user_id)
     db.commit()
     db.refresh(review)
     return serialize_review(review)
@@ -1199,6 +1657,10 @@ def update_review(
     )
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
+    project = db.query(Project).filter(Project.project_id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_is_not_discarded(project)
     if review.reviewer_id != current_user.user_id:
         raise HTTPException(status_code=403, detail="Only the reviewer who created this review can update it")
  
@@ -1210,9 +1672,156 @@ def update_review(
         review.comment = payload.comment
     review.updated_at = datetime.now(timezone.utc)
  
+    check_and_trigger_automatic_approval(project, db, current_user.user_id)
     db.commit()
     db.refresh(review)
     return serialize_review(review)
+
+# --- NOC (No-Objection Certificate) endpoints ---
+
+@app.get("/projects/{project_id}/noc")
+def get_noc_status(
+    project_id: str,
+    db=Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return NOC status for every department (showing NOT_REQUIRED for non-required)."""
+    project = db.query(Project).filter(Project.project_id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    owner_dept = project.department_id or ""
+
+    all_cleared, req_depts, given_depts, rejected_depts = are_all_required_nocs_given(project, db)
+
+    noc_rows = db.execute(
+        text("SELECT department, given_by, given_at, withdrawn_at, withdrawn_by, status, comment FROM project_noc WHERE project_id=:pid"),
+        {"pid": project_id}
+    ).mappings().all()
+    status_map = {row["department"]: dict(row) for row in noc_rows}
+
+    statuses = []
+    for dept in ALL_DEPARTMENTS:
+        if dept == owner_dept or dept not in req_depts:
+            statuses.append({"department": dept, "status": "NOT_REQUIRED", "given_by": None, "given_at": None, "comment": None})
+        elif dept in status_map:
+            row = status_map[dept]
+            statuses.append({"department": dept, "status": row["status"],
+                             "given_by": row["given_by"], "given_at": row["given_at"],
+                             "withdrawn_at": row["withdrawn_at"], "comment": row["comment"]})
+        else:
+            statuses.append({"department": dept, "status": "PENDING", "given_by": None, "given_at": None, "comment": None})
+
+    return {
+        "project_id": project_id,
+        "owner_department": owner_dept,
+        "given": len(given_depts),
+        "total": len(req_depts),
+        "all_cleared": all_cleared,
+        "departments": statuses,
+    }
+
+@app.post("/projects/{project_id}/noc")
+def give_noc(
+    project_id: str,
+    payload: NOCCreate,
+    db=Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """A non-owner department formally gives No Objection for a project."""
+    project = db.query(Project).filter(Project.project_id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_is_not_discarded(project)
+    owner_dept = project.department_id or ""
+    if current_user.department == owner_dept:
+        raise HTTPException(status_code=409, detail="The owning department does not need to give NOC for its own project")
+    if current_user.department not in ALL_DEPARTMENTS:
+        raise HTTPException(status_code=403, detail="Only department users can give NOC")
+    # Check for active NOC (prevent duplicate)
+    existing = db.execute(
+        text("SELECT id, status FROM project_noc WHERE project_id=:pid AND department=:dept"),
+        {"pid": project_id, "dept": current_user.department}
+    ).mappings().first()
+    if existing and existing["status"] == "NOC_GIVEN":
+        raise HTTPException(status_code=409, detail=f"Your department ({current_user.department}) has already given No Objection for this project")
+    dept_label = current_user.department.replace("-", " ").title()
+    noc_id = str(uuid.uuid4())
+    if existing:
+        # Was withdrawn — update to re-give
+        db.execute(text("""
+            UPDATE project_noc SET id=:new_id, given_by=:given_by, given_at=now(),
+              status='NOC_GIVEN', withdrawn_at=NULL, withdrawn_by=NULL, comment=:comment
+            WHERE project_id=:pid AND department=:dept
+        """), {"new_id": noc_id, "given_by": current_user.user_id,
+               "comment": payload.comment, "pid": project_id, "dept": current_user.department})
+    else:
+        db.execute(text("""
+            INSERT INTO project_noc (id, project_id, department, given_by, comment, status)
+            VALUES (:id, :project_id, :dept, :given_by, :comment, 'NOC_GIVEN')
+        """), {"id": noc_id, "project_id": project_id,
+               "dept": current_user.department, "given_by": current_user.user_id,
+               "comment": payload.comment})
+    # Notify the project-owning department
+    notify_department(
+        db, owner_dept, "NOC_GIVEN",
+        f"No Objection received from {dept_label}",
+        f"{dept_label} has given No Objection for project '{project.project_name}'.",
+        project_id=project_id, action_required=False
+    )
+    # Audit using project_status_history style entry via audit()
+    audit(db, current_user.user_id, "NOC_GIVEN", "project", project_id,
+          {"department": current_user.department, "action": "NOC Given", "comment": payload.comment})
+
+    db.flush()
+    # Check and trigger automatic approval if all required departments gave NOC
+    auto_approved = check_and_trigger_automatic_approval(project, db, current_user.user_id)
+
+    db.commit()
+    db.refresh(project)
+    return {
+        "noc_id": noc_id, "project_id": project_id,
+        "department": current_user.department,
+        "given_by": current_user.user_id,
+        "status": "NOC_GIVEN",
+        "auto_approved": auto_approved,
+        "project_status": project.status,
+    }
+
+@app.delete("/projects/{project_id}/noc")
+def withdraw_noc(
+    project_id: str,
+    db=Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """A department withdraws its previously given No Objection."""
+    project = db.query(Project).filter(Project.project_id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_is_not_discarded(project)
+    owner_dept = project.department_id or ""
+    if current_user.department == owner_dept:
+        raise HTTPException(status_code=409, detail="The owning department has no NOC to withdraw")
+    existing = db.execute(
+        text("SELECT id, status FROM project_noc WHERE project_id=:pid AND department=:dept"),
+        {"pid": project_id, "dept": current_user.department}
+    ).mappings().first()
+    if not existing or existing["status"] != "NOC_GIVEN":
+        raise HTTPException(status_code=409, detail="No active No Objection found to withdraw")
+    db.execute(text("""
+        UPDATE project_noc SET status='NOC_WITHDRAWN', withdrawn_at=now(), withdrawn_by=:user
+        WHERE project_id=:pid AND department=:dept
+    """), {"user": current_user.user_id, "pid": project_id, "dept": current_user.department})
+    dept_label = current_user.department.replace("-", " ").title()
+    notify_department(
+        db, owner_dept, "NOC_WITHDRAWN",
+        f"No Objection Withdrawn by {dept_label}",
+        f"{dept_label} has withdrawn their No Objection for project '{project.project_name}'. The project can no longer be approved until they re-submit.",
+        project_id=project_id, action_required=True
+    )
+    audit(db, current_user.user_id, "NOC_WITHDRAWN", "project", project_id,
+          {"department": current_user.department, "action": "NOC Withdrawn"})
+    db.commit()
+    return {"project_id": project_id, "department": current_user.department, "status": "NOC_WITHDRAWN"}
 
 # --- Coordination and notifications ---
 def group_projects(db, group_id):
@@ -1229,6 +1838,16 @@ def group_view(db, group_id):
     events = db.execute(text("SELECT * FROM coordination_events WHERE group_id=:id ORDER BY created_at"), {"id":str(group_id)}).mappings().all()
     return {"group":dict(group), "projects":[serialize_project(p) for p in projects], "responses":[dict(r) for r in responses], "proposals":[dict(p) for p in proposals], "confirmations":[dict(r) for r in confirmations], "events":[dict(r) for r in events]}
 
+def require_coordination_participant(group_id, db, current_user):
+    projects = group_projects(db, group_id)
+    if not projects:
+        raise HTTPException(status_code=404, detail="Coordination group not found")
+    requester_department = db.execute(text("""SELECT u.department FROM coordination_groups g
+      JOIN users u ON u.user_id=g.created_by WHERE g.id=:group"""), {"group": str(group_id)}).scalar()
+    if current_user.role != "Super Admin" and current_user.department not in {*{p.department_id for p in projects}, requester_department}:
+        raise HTTPException(status_code=403, detail="Only participating departments can access this coordination")
+    return projects
+
 def common_window(projects, requested_start=None, requested_end=None):
     start = max([p.start_date for p in projects] + ([requested_start] if requested_start else []))
     end = min([p.end_date for p in projects] + ([requested_end] if requested_end else []))
@@ -1244,11 +1863,20 @@ def list_opportunities(db=Depends(get_db), current_user: User = Depends(get_curr
 @app.post("/coordination/groups")
 def create_coordination_group(payload: CoordinationGroupCreate, db=Depends(get_db), current_user: User = Depends(get_current_user)):
     ids = list(dict.fromkeys(payload.project_ids))
-    if len(ids) < 2: raise HTTPException(status_code=422, detail="Select at least two independent projects")
+    if not ids or len(ids) > 2: raise HTTPException(status_code=422, detail="Select one project to request coordination, or two projects to coordinate together")
     projects = db.query(Project).filter(Project.project_id.in_(ids)).all()
     if len(projects) != len(ids): raise HTTPException(status_code=404, detail="One or more projects do not exist")
-    if not any(p.department_id == current_user.department for p in projects) and current_user.role != "Super Admin":
-        raise HTTPException(status_code=403, detail="Your department must participate in a coordination group")
+    if any(project.status == "DISCARDED" for project in projects):
+        raise HTTPException(status_code=409, detail="Discarded projects cannot be coordinated")
+    departments = {p.department_id for p in projects}
+    direct_request = len(projects) == 1
+    if direct_request and projects[0].department_id == current_user.department:
+        raise HTTPException(status_code=409, detail="The owning department already has project access and cannot request coordination with itself")
+    if not direct_request:
+        if len(departments) < 2:
+            raise HTTPException(status_code=422, detail="Use internal project grouping for same-department projects")
+        if current_user.role != "Super Admin" and not any(p.department_id == current_user.department for p in projects):
+            raise HTTPException(status_code=403, detail="Your department must own a project in a coordination request")
 
     # --- Idempotency: return existing active group if one already covers the same project pair ---
     # Find any group whose member set exactly matches the requested set.
@@ -1256,12 +1884,15 @@ def create_coordination_group(payload: CoordinationGroupCreate, db=Depends(get_d
     existing_group_id = db.execute(text("""
         SELECT g.id FROM coordination_groups g
         WHERE g.status NOT IN ('BROKEN', 'COMPLETED')
+          AND (:direct_request = false OR g.created_by = :creator)
           AND (
             SELECT array_agg(gp.project_id::text ORDER BY gp.project_id::text)
             FROM coordination_group_projects gp WHERE gp.group_id = g.id
           ) = CAST(:pair AS text[])
-    """), {"pair": sorted_ids}).scalar()
+    """), {"pair": sorted_ids, "direct_request": direct_request, "creator": current_user.user_id}).scalar()
     if existing_group_id:
+        if direct_request:
+            raise HTTPException(status_code=409, detail="Your department already has a coordination request for this project")
         return group_view(db, str(existing_group_id))
 
     pair_blockers = []
@@ -1285,21 +1916,33 @@ def create_coordination_group(payload: CoordinationGroupCreate, db=Depends(get_d
     VALUES (:id,:code,:name,:start,:end,:type,:score,:savings,:creator)"""), {"id":gid,"code":code,"name":f"Coordinated corridor — {projects[0].project_name}","start":window[0],"end":window[1],"type":payload.coordination_type,"score":score,"savings":sum(float(p.restoration_cost or 0) for p in projects[1:]),"creator":current_user.user_id})
     for project in projects: db.execute(text("INSERT INTO coordination_group_projects (group_id,project_id) VALUES (:g,:p)"), {"g":gid,"p":str(project.project_id)})
     audit(db,current_user.user_id,"COORDINATION_GROUP_CREATED","coordination_group",gid,{"project_ids":ids})
+    for project in projects:
+        audit(db, current_user.user_id, "COORDINATION_REQUEST_OPENED", "project", project.project_id,
+              {"group_id": gid, "requesting_department": current_user.department})
     db.commit(); return group_view(db,gid)
 
 @app.get("/coordination/groups")
 def list_groups(db=Depends(get_db), current_user: User = Depends(get_current_user)):
-    return [dict(r) for r in db.execute(text("SELECT * FROM coordination_groups ORDER BY updated_at DESC")).mappings()]
+    if current_user.role == "Super Admin":
+        return [dict(r) for r in db.execute(text("SELECT * FROM coordination_groups ORDER BY updated_at DESC")).mappings()]
+    return [dict(r) for r in db.execute(text("""SELECT DISTINCT g.* FROM coordination_groups g
+      JOIN coordination_group_projects gp ON gp.group_id=g.id JOIN projects p ON p.project_id=gp.project_id
+      JOIN users requester ON requester.user_id=g.created_by
+      WHERE p.department_id=:department OR requester.department=:department ORDER BY g.updated_at DESC"""), {"department": current_user.department}).mappings()]
 
 @app.get("/coordination/groups/{group_id}")
 def get_group(group_id: str, db=Depends(get_db), current_user: User = Depends(get_current_user)):
+    require_coordination_participant(group_id, db, current_user)
     return group_view(db,group_id)
 
 @app.post("/coordination/groups/{group_id}/proposals")
 def create_proposal(group_id: str, payload: ProposalCreate, db=Depends(get_db), current_user: User = Depends(get_current_user)):
     projects = group_projects(db,group_id)
     if not projects: raise HTTPException(status_code=404, detail="Coordination group not found")
-    if not any(p.department_id == current_user.department for p in projects): raise HTTPException(status_code=403, detail="Only a participating department can propose")
+    group_creator = db.execute(text("SELECT created_by FROM coordination_groups WHERE id=:group"), {"group": group_id}).scalar()
+    if current_user.role != "Super Admin" and not any(p.department_id == current_user.department for p in projects) and group_creator != current_user.user_id: raise HTTPException(status_code=403, detail="Only a participating department can propose")
+    if db.execute(text("SELECT 1 FROM coordination_proposals WHERE group_id=:g AND status='PENDING'"), {"g": group_id}).scalar():
+        raise HTTPException(status_code=409, detail="A coordination request is already awaiting an owner response")
     if payload.proposed_end < payload.proposed_start: raise HTTPException(status_code=422, detail="Proposal end must follow start")
     feasible = common_window(projects,payload.proposed_start,payload.proposed_end)
     if not feasible or feasible != (payload.proposed_start,payload.proposed_end): raise HTTPException(status_code=422, detail="Proposed window is not feasible for all participating projects")
@@ -1308,9 +1951,20 @@ def create_proposal(group_id: str, payload: ProposalCreate, db=Depends(get_db), 
     db.execute(text("""INSERT INTO coordination_proposals (id,proposal_code,group_id,proposed_start,proposed_end,coordination_type,message,created_by)
       VALUES (:id,:code,:group,:start,:end,:type,:message,:creator)"""),{"id":pid,"code":code,"group":group_id,"start":payload.proposed_start,"end":payload.proposed_end,"type":payload.coordination_type,"message":payload.message,"creator":current_user.user_id})
     db.execute(text("UPDATE coordination_groups SET status='PENDING',updated_at=now() WHERE id=:g"),{"g":group_id})
+    # The requesting department has already opted in by making the request.
+    # Only the other owning department(s) need to accept or reject it.
+    db.execute(text("""INSERT INTO coordination_responses
+      (id,proposal_id,department,response,message,responded_by)
+      VALUES (:id,:proposal,:department,'ACCEPTED',:message,:user)
+      ON CONFLICT (proposal_id,department) DO NOTHING"""),
+      {"id":str(uuid.uuid4()),"proposal":pid,"department":current_user.department,
+       "message":"Coordination requested by this department.","user":current_user.user_id})
     for department in set(p.department_id for p in projects if p.department_id != current_user.department):
         notify_department(db,department,"COORDINATION_PROPOSAL","New coordination proposal",f"{current_user.department.title()} proposed {payload.proposed_start} to {payload.proposed_end}.",group_id=group_id,proposal_id=pid)
     audit(db,current_user.user_id,"COORDINATION_PROPOSAL_CREATED","proposal",pid,{"group_id":group_id})
+    for project in projects:
+        audit(db, current_user.user_id, "COORDINATION_REQUESTED", "project", project.project_id,
+              {"group_id": group_id, "proposal_id": pid, "requesting_department": current_user.department})
     db.commit(); return {"proposal_id":pid,"proposal_code":code,"status":"PENDING"}
 
 @app.get("/coordination/proposals")
@@ -1323,6 +1977,7 @@ def list_proposals(db=Depends(get_db), current_user: User = Depends(get_current_
 def get_proposal(proposal_id: str, db=Depends(get_db), current_user: User = Depends(get_current_user)):
     proposal=db.execute(text("SELECT * FROM coordination_proposals WHERE id=:id"),{"id":proposal_id}).mappings().first()
     if not proposal: raise HTTPException(status_code=404,detail="Proposal not found")
+    require_coordination_participant(proposal["group_id"], db, current_user)
     return {"proposal":dict(proposal), **group_view(db,proposal["group_id"])}
 
 @app.get("/coordination/groups/{group_id}/comments")
@@ -1331,8 +1986,12 @@ def list_coordination_comments(group_id: str, db=Depends(get_db), current_user: 
     # Group membership uses the cross-department relation; unrelated users
     # cannot read the shared discussion.
     departments = {project.department_id for project in group_projects(db, group_id)}
+    requester = db.execute(text("SELECT u.department FROM coordination_groups g JOIN users u ON u.user_id=g.created_by WHERE g.id=:g"), {"g": group_id}).scalar()
+    departments.add(requester)
     if current_user.role != "Super Admin" and current_user.department not in departments:
         raise HTTPException(status_code=403, detail="Only participating departments can read this discussion")
+    if group["group"]["status"] not in {"APPROVED", "CONFIRMED", "SCHEDULED", "COMPLETED"}:
+        raise HTTPException(status_code=409, detail="Discussion access is granted after coordination is approved")
     return [dict(row) for row in db.execute(text("""SELECT c.*, u.name AS author_name FROM coordination_comments c
       JOIN users u ON u.user_id=c.author_id WHERE c.group_id=:g ORDER BY c.created_at"""), {"g":group_id}).mappings()]
 
@@ -1341,8 +2000,13 @@ def add_coordination_comment(group_id: str, payload: CoordinationCommentCreate, 
     message=payload.message.strip()
     if not message: raise HTTPException(status_code=422, detail="Comment message is required")
     departments={project.department_id for project in group_projects(db, group_id)}
+    requester = db.execute(text("SELECT u.department FROM coordination_groups g JOIN users u ON u.user_id=g.created_by WHERE g.id=:g"), {"g": group_id}).scalar()
+    departments.add(requester)
     if current_user.role != "Super Admin" and current_user.department not in departments:
         raise HTTPException(status_code=403, detail="Only participating departments can comment")
+    group = db.execute(text("SELECT status FROM coordination_groups WHERE id=:id"), {"id": group_id}).mappings().first()
+    if not group or group["status"] not in {"APPROVED", "CONFIRMED", "SCHEDULED"}:
+        raise HTTPException(status_code=409, detail="Coordination must be approved before comments can be added")
     comment_id=str(uuid.uuid4())
     db.execute(text("INSERT INTO coordination_comments (id,group_id,author_id,department,message) VALUES (:id,:g,:author,:department,:message)"), {"id":comment_id,"g":group_id,"author":current_user.user_id,"department":current_user.department,"message":message})
     audit(db,current_user.user_id,"COORDINATION_COMMENT_CREATED","coordination_group",group_id,{"comment_id":comment_id})
@@ -1373,7 +2037,11 @@ def respond_to_proposal(proposal_id, response, payload, db, current_user):
     if not proposal: raise HTTPException(status_code=404,detail="Proposal not found")
     if proposal["status"] != "PENDING": raise HTTPException(status_code=409,detail="This proposal is no longer awaiting responses")
     projects=group_projects(db,proposal["group_id"])
-    if not any(p.department_id == current_user.department for p in projects): raise HTTPException(status_code=403,detail="Your department is not a participant")
+    departments = {p.department_id for p in projects}
+    if current_user.role != "Super Admin" and current_user.department not in departments: raise HTTPException(status_code=403,detail="Your department is not a participant")
+    requester = db.execute(text("SELECT department FROM coordination_responses WHERE proposal_id=:p AND message='Coordination requested by this department.'"), {"p": proposal_id}).scalar()
+    if current_user.role != "Super Admin" and requester == current_user.department:
+        raise HTTPException(status_code=409, detail="Your department already requested this coordination; wait for the owning department response")
     if response == "REJECTED" and not payload.message: raise HTTPException(status_code=422,detail="A rejection reason is required")
     db.execute(text("""INSERT INTO coordination_responses (id,proposal_id,department,response,requested_start,requested_end,message,responded_by)
     VALUES (:id,:proposal,:department,:response,:start,:end,:message,:user)
@@ -1394,6 +2062,9 @@ def respond_to_proposal(proposal_id, response, payload, db, current_user):
     else:
         notify_department(db, current_user.department,"COORDINATION_RESPONSE",f"Coordination proposal {status_value.title()}",payload.message or "A participant responded to the proposal.",group_id=str(proposal["group_id"]),proposal_id=proposal_id)
     audit(db,current_user.user_id,"COORDINATION_RESPONSE_SUBMITTED","proposal",proposal_id,{"response":response})
+    for project in projects:
+        audit(db, current_user.user_id, "COORDINATION_REQUEST_" + response, "project", project.project_id,
+              {"group_id": str(proposal["group_id"]), "proposal_id": proposal_id, "department": current_user.department})
     db.commit(); return get_proposal(proposal_id,db,current_user)
 
 @app.post("/coordination/proposals/{proposal_id}/accept")
@@ -1421,7 +2092,9 @@ def schedule_coordination_group(group_id:str, db=Depends(get_db), current_user:U
     if not group: raise HTTPException(status_code=404,detail="Coordination group not found")
     if group["status"] != "CONFIRMED": raise HTTPException(status_code=409,detail="All departments must explicitly confirm before scheduling")
     if current_user.role != "Super Admin": raise HTTPException(status_code=403,detail="Only City Admin can schedule the final joint execution plan")
-    for project in group_projects(db,group_id): project.status="Scheduled"
+    for project in group_projects(db,group_id):
+        ensure_project_is_not_discarded(project)
+        project.status="Scheduled"
     db.execute(text("UPDATE coordination_groups SET status='SCHEDULED',updated_at=now() WHERE id=:g"),{"g":group_id});db.commit();return group_view(db,group_id)
 
 @app.post("/coordination/groups/{group_id}/revoke")
@@ -1482,7 +2155,9 @@ def refresh_group_geometry(db, group_id):
 def internal_grouping_opportunities(project_id:str,db=Depends(get_db),current_user:User=Depends(get_current_user)):
     project=db.query(Project).filter(Project.project_id==project_id).first()
     if not project: raise HTTPException(status_code=404,detail="Project not found")
-    candidates=db.query(Project).filter(Project.project_id!=project.project_id,Project.department_id==project.department_id,Project.status.notin_(["Rejected","Cancelled","Completed"])).all()
+    if project.status == "DISCARDED":
+        return {"project_id":project_id,"department":project.department_id,"opportunities":[]}
+    candidates=db.query(Project).filter(Project.project_id!=project.project_id,Project.department_id==project.department_id,Project.status.notin_(["Rejected","Cancelled","Completed","DISCARDED"])).all()
     result=[]
     for candidate in candidates:
         analysis=coordination_pair_analysis(project,candidate,db)
@@ -1494,6 +2169,7 @@ def internal_grouping_opportunities(project_id:str,db=Depends(get_db),current_us
 def create_internal_group(payload:ProjectGroupCreate,db=Depends(get_db),current_user:User=Depends(get_current_user)):
     ids=list(dict.fromkeys(payload.project_ids)); projects=db.query(Project).filter(Project.project_id.in_(ids)).all()
     if len(ids)<2 or len(projects)!=len(ids): raise HTTPException(status_code=422,detail="Select two or more valid source projects")
+    if any(project.status == "DISCARDED" for project in projects): raise HTTPException(status_code=409,detail="Discarded projects cannot be grouped")
     if any(p.department_id!=current_user.department for p in projects) and current_user.role!="Super Admin": raise HTTPException(status_code=403,detail="Internal groups may contain only your department's projects")
     if len(set(p.department_id for p in projects))!=1: raise HTTPException(status_code=422,detail="Internal grouping requires one department")
     analysis=internal_group_analysis(projects,db)
@@ -1530,7 +2206,7 @@ def analyze_internal_group(group_id:str,db=Depends(get_db),current_user:User=Dep
 def group_candidate_projects(group_id:str,db=Depends(get_db),current_user:User=Depends(get_current_user)):
     group=db.execute(text("SELECT department_id FROM project_groups WHERE id=:id"),{"id":group_id}).mappings().first()
     if not group:raise HTTPException(status_code=404,detail="Project group not found")
-    members=internal_group_members(db,group_id); member_ids={p.project_id for p in members}; candidates=db.query(Project).filter(Project.department_id==group["department_id"],Project.status.notin_(["Rejected","Cancelled","Completed"])).all(); result=[]
+    members=internal_group_members(db,group_id); member_ids={p.project_id for p in members}; candidates=db.query(Project).filter(Project.department_id==group["department_id"],Project.status.notin_(["Rejected","Cancelled","Completed","DISCARDED"])).all(); result=[]
     for candidate in candidates:
         if candidate.project_id in member_ids:continue
         analysis=internal_group_analysis([*members,candidate],db)

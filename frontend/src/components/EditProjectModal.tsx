@@ -7,20 +7,73 @@ type Props = {
   onClose: () => void;
   onSave: (id: string, values: Record<string, unknown>) => Promise<void>;
 };
+
+const PREDEFINED_DURATIONS = [
+  "1 - 2 days",
+  "3 - 5 days",
+  "5 - 7 days",
+  "10 - 12 days",
+  "1 - 2 weeks",
+  "2 - 3 weeks",
+  "1 - 2 months",
+  "2 - 3 months",
+];
+
+function parseDurationState(durationStr: string | null | undefined) {
+  if (!durationStr || PREDEFINED_DURATIONS.includes(durationStr)) {
+    return {
+      selectedDuration: durationStr || "10 - 12 days",
+      customVal: "",
+      customUnit: "Days",
+    };
+  }
+  const match = durationStr.match(/\d+/);
+  const val = match ? match[0] : "";
+  const lower = durationStr.toLowerCase();
+  let unit = "Days";
+  if (lower.includes("week")) unit = "Weeks";
+  else if (lower.includes("month")) unit = "Months";
+  return { selectedDuration: "Custom", customVal: val, customUnit: unit };
+}
+
+const CREATOR_STATUS_OPTIONS = [
+  "In Review",
+  "Approved",
+  "In Progress",
+  "Restoration",
+  "Verification",
+  "Completed",
+];
+
 export function EditProjectModal({ project, onClose, onSave }: Props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState<Record<string, string> | null>(null);
+  const [customVal, setCustomVal] = useState("");
+  const [customUnit, setCustomUnit] = useState("Days");
+
+  const isNocComplete = project
+    ? Boolean(project.noc_summary?.all_cleared) || ["Approved", "Scheduled", "In Progress", "Ongoing", "Restoration", "Verification", "Completed"].includes(project.status)
+    : false;
 
   useEffect(() => {
     if (project) {
+      const { selectedDuration, customVal: initVal, customUnit: initUnit } =
+        parseDurationState(project.duration);
+      setCustomVal(initVal);
+      setCustomUnit(initUnit);
+
+      const nocDone = Boolean(project.noc_summary?.all_cleared) || ["Approved", "Scheduled", "In Progress", "Ongoing", "Restoration", "Verification", "Completed"].includes(project.status);
+      const initialStatus = !nocDone ? "In Review" : project.status;
+
       setForm({
         project_name: project.project_name,
         description: project.description ?? "",
         project_type: project.project_type,
         urgency: project.urgency,
+        status: initialStatus,
         start_date: project.start_date,
-        end_date: project.end_date,
+        duration: selectedDuration,
         excavation_width_m: String(project.excavation_width_m),
         excavation_depth_m: project.excavation_depth_m === null ? "" : String(project.excavation_depth_m),
         contractor_name: project.contractor_name ?? "",
@@ -37,15 +90,37 @@ export function EditProjectModal({ project, onClose, onSave }: Props) {
     e.preventDefault();
     setSaving(true);
     setError(null);
+    if (form.status === "Approved" && !isNocComplete) {
+      setSaving(false);
+      return setError("Cannot manually set project status to Approved before all required department NOCs are given.");
+    }
+    if (form.status !== "In Review" && !isNocComplete) {
+      setSaving(false);
+      return setError("Project status remains In Review until all department NOCs are cleared and project is approved.");
+    }
+    let finalDuration = form.duration;
+    if (form.duration === "Custom") {
+      const num = Number(customVal);
+      if (!customVal || isNaN(num) || num <= 0) {
+        setSaving(false);
+        return setError("Enter a valid custom duration greater than 0.");
+      }
+      finalDuration = `${customVal.trim()} ${customUnit.toLowerCase()}`;
+    }
     try {
-      await onSave(project.project_id, {
+      const payload: Record<string, unknown> = {
         ...form,
+        duration: finalDuration,
         excavation_width_m: Number(form.excavation_width_m),
         excavation_depth_m: form.excavation_depth_m
           ? Number(form.excavation_depth_m)
           : null,
         contractor_name: form.contractor_name || null,
-      });
+      };
+      if (form.status === project.status) {
+        delete payload.status;
+      }
+      await onSave(project.project_id, payload);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to update project");
@@ -71,6 +146,23 @@ export function EditProjectModal({ project, onClose, onSave }: Props) {
         </div>
         {error && <p className="form-error">{error}</p>}
         <div className="edit-grid">
+          <label>
+            Project status
+            <select
+              value={form.status}
+              onChange={(e) => set("status", e.target.value)}
+              disabled={!isNocComplete}
+            >
+              {CREATOR_STATUS_OPTIONS.map((x) => {
+                const disabled = x !== "In Review" && !isNocComplete;
+                return (
+                  <option key={x} value={x} disabled={disabled}>
+                    {x}{disabled ? " (Awaiting NOCs)" : ""}
+                  </option>
+                );
+              })}
+            </select>
+          </label>
           <label>
             Project name
             <input
@@ -116,7 +208,7 @@ export function EditProjectModal({ project, onClose, onSave }: Props) {
             />
           </label>
           <label>
-            Start date
+            Tentative start date
             <input
               type="date"
               value={form.start_date}
@@ -125,14 +217,48 @@ export function EditProjectModal({ project, onClose, onSave }: Props) {
             />
           </label>
           <label>
-            End date
-            <input
-              type="date"
-              value={form.end_date}
-              onChange={(e) => set("end_date", e.target.value)}
-              required
-            />
+            Duration
+            <select
+              value={form.duration}
+              onChange={(e) => set("duration", e.target.value)}
+            >
+              <option value="1 - 2 days">1 - 2 days</option>
+              <option value="3 - 5 days">3 - 5 days</option>
+              <option value="5 - 7 days">5 - 7 days</option>
+              <option value="10 - 12 days">10 - 12 days</option>
+              <option value="1 - 2 weeks">1 - 2 weeks</option>
+              <option value="2 - 3 weeks">2 - 3 weeks</option>
+              <option value="1 - 2 months">1 - 2 months</option>
+              <option value="2 - 3 months">2 - 3 months</option>
+              <option value="Custom">Custom</option>
+            </select>
           </label>
+          {form.duration === "Custom" && (
+            <>
+              <label>
+                Custom duration
+                <input
+                  type="number"
+                  min="1"
+                  placeholder="e.g. 15"
+                  value={customVal}
+                  onChange={(e) => setCustomVal(e.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                Unit
+                <select
+                  value={customUnit}
+                  onChange={(e) => setCustomUnit(e.target.value)}
+                >
+                  <option value="Days">Days</option>
+                  <option value="Weeks">Weeks</option>
+                  <option value="Months">Months</option>
+                </select>
+              </label>
+            </>
+          )}
           <label>
             Excavation width (m)
             <input

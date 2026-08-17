@@ -16,17 +16,10 @@ import { useGis } from "@/context/GisContext";
 import type { UtilityType } from "@/context/GisContext";
 import { useProjects } from "@/context/ProjectsContext";
 import { TopNav } from "@/components/TopNav";
+import { PROJECT_PRIORITIES, PROJECT_TYPES } from "@/projectOptions";
 import "leaflet/dist/leaflet.css";
 import "@/App.css";
 type Point = [number, number];
-const types = [
-  "New Installation",
-  "Repair",
-  "Replacement",
-  "Maintenance",
-  "Expansion / Extension",
-  "Rehabilitation",
-];
 const colours: Record<UtilityType, string> = {
   roads: "#6b7280",
   water: "#2383d5",
@@ -120,25 +113,16 @@ export function CreateProjectPage() {
     description: "",
     urgency: "Planned",
     start_date: "",
-    end_date: "",
+    duration: "10 - 12 days",
     excavation_width_m: "",
     excavation_depth_m: "",
     estimated_cost: "",
-    excavation_cost: "",
-    restoration_cost: "",
-    traffic_management_cost: "",
     contractor_name: "",
   });
+  const [customDurationVal, setCustomDurationVal] = useState("");
+  const [customDurationUnit, setCustomDurationUnit] = useState("Days");
   const [points, setPoints] = useState<Point[]>([]);
   const length = useMemo(() => corridorLength(points), [points]);
-  const duration =
-    form.start_date && form.end_date
-      ? Math.floor(
-          (Date.parse(`${form.end_date}T00:00:00`) -
-            Date.parse(`${form.start_date}T00:00:00`)) /
-            86400000,
-        ) + 1
-      : null;
   if (!user) return null;
   const ownLayer = layers[user.department as UtilityType];
   const relevantProjects = projects.filter(
@@ -147,31 +131,24 @@ export function CreateProjectPage() {
   const update = (key: keyof typeof form, value: string) =>
     setForm((current) => ({ ...current, [key]: value }));
   const next = () => {
-    const costs = [
-      "excavation_cost",
-      "restoration_cost",
-      "traffic_management_cost",
-    ].reduce(
-      (total, key) => total + Number(form[key as keyof typeof form] || 0),
-      0,
-    );
     if (step === 1 && points.length < 2)
       return setError("Draw a work corridor with at least two points.");
     if (step === 2 && (!form.project_name || !form.description))
       return setError("Add a project name and work description.");
-    if (step === 3 && (!duration || duration < 1))
-      return setError(
-        "Planned end date must be on or after planned start date.",
-      );
+    if (step === 3) {
+      if (!form.start_date || !form.duration)
+        return setError("Select a tentative start date and duration.");
+      if (form.duration === "Custom") {
+        const num = Number(customDurationVal);
+        if (!customDurationVal || isNaN(num) || num <= 0)
+          return setError("Enter a valid custom duration greater than 0.");
+      }
+    }
     if (
       step === 4 &&
       (!form.excavation_width_m || Number(form.excavation_width_m) <= 0)
     )
       return setError("Excavation width must be greater than zero.");
-    if (form.estimated_cost && Number(form.estimated_cost) < costs)
-      return setError(
-        "Estimated cost must cover excavation, restoration, and traffic management costs.",
-      );
     setError(null);
     setStep((current) => Math.min(4, current + 1));
   };
@@ -181,14 +158,21 @@ export function CreateProjectPage() {
     setError(null);
     try {
       const nullable = (value: string) => (value === "" ? null : Number(value));
+      const finalDuration =
+        form.duration === "Custom"
+          ? `${customDurationVal.trim()} ${customDurationUnit.toLowerCase()}`
+          : form.duration;
       const project = await createProject({
         ...form,
+        start_date: form.start_date,
+        duration: finalDuration,
+        end_date: null,
         excavation_width_m: Number(form.excavation_width_m),
         excavation_depth_m: nullable(form.excavation_depth_m),
         estimated_cost: nullable(form.estimated_cost),
-        excavation_cost: nullable(form.excavation_cost),
-        restoration_cost: nullable(form.restoration_cost),
-        traffic_management_cost: nullable(form.traffic_management_cost),
+        excavation_cost: null,
+        restoration_cost: null,
+        traffic_management_cost: null,
         contractor_name: form.contractor_name || null,
         geometry: {
           type: "LineString",
@@ -338,7 +322,7 @@ export function CreateProjectPage() {
                       value={form.project_type}
                       onChange={(e) => update("project_type", e.target.value)}
                     >
-                      {types.map((type) => (
+                      {PROJECT_TYPES.map((type) => (
                         <option key={type}>{type}</option>
                       ))}
                     </select>
@@ -349,7 +333,7 @@ export function CreateProjectPage() {
                       value={form.urgency}
                       onChange={(e) => update("urgency", e.target.value)}
                     >
-                      {["Planned", "Urgent", "Emergency"].map((value) => (
+                      {PROJECT_PRIORITIES.map((value) => (
                         <option key={value}>{value}</option>
                       ))}
                     </select>
@@ -373,33 +357,61 @@ export function CreateProjectPage() {
             {step === 3 && (
               <>
                 <div className="date-fields">
+                <label>
+                  Tentative start date
+                  <input
+                    required
+                    type="date"
+                    value={form.start_date}
+                    onChange={(e) => update("start_date", e.target.value)}
+                  />
+                </label>
+                <label>
+                  Duration
+                  <select
+                    value={form.duration}
+                    onChange={(e) => update("duration", e.target.value)}
+                  >
+                    <option value="1 - 2 days">1 - 2 days</option>
+                    <option value="3 - 5 days">3 - 5 days</option>
+                    <option value="5 - 7 days">5 - 7 days</option>
+                    <option value="10 - 12 days">10 - 12 days</option>
+                    <option value="1 - 2 weeks">1 - 2 weeks</option>
+                    <option value="2 - 3 weeks">2 - 3 weeks</option>
+                    <option value="1 - 2 months">1 - 2 months</option>
+                    <option value="2 - 3 months">2 - 3 months</option>
+                    <option value="Custom">Custom</option>
+                  </select>
+                </label>
+              </div>
+              {form.duration === "Custom" && (
+                <div className="date-fields" style={{ marginTop: "1rem" }}>
                   <label>
-                    Planned start date
+                    Custom duration
                     <input
+                      type="number"
+                      min="1"
+                      placeholder="e.g. 15"
+                      value={customDurationVal}
+                      onChange={(e) => setCustomDurationVal(e.target.value)}
                       required
-                      type="date"
-                      value={form.start_date}
-                      onChange={(e) => update("start_date", e.target.value)}
                     />
                   </label>
                   <label>
-                    Planned end date
-                    <input
-                      required
-                      type="date"
-                      value={form.end_date}
-                      onChange={(e) => update("end_date", e.target.value)}
-                    />
+                    Unit
+                    <select
+                      value={customDurationUnit}
+                      onChange={(e) => setCustomDurationUnit(e.target.value)}
+                    >
+                      <option value="Days">Days</option>
+                      <option value="Weeks">Weeks</option>
+                      <option value="Months">Months</option>
+                    </select>
                   </label>
                 </div>
-                <p className="calculated-value">
-                  Project duration:{" "}
-                  {duration && duration > 0
-                    ? `${duration} days`
-                    : "Not calculated"}
-                </p>
-              </>
-            )}
+              )}
+            </>
+          )}
             {step === 4 && (
               <>
                 <div className="date-fields">
@@ -429,33 +441,24 @@ export function CreateProjectPage() {
                     />
                   </label>
                 </div>
-                <div className="cost-grid">
-                  {[
-                    ["estimated_cost", "Estimated cost"],
-                    ["excavation_cost", "Excavation cost"],
-                    ["restoration_cost", "Restoration cost"],
-                    ["traffic_management_cost", "Traffic management cost"],
-                  ].map(([key, label]) => (
-                    <label key={key}>
-                      {label}
-                      <input
-                        type="number"
-                        min="0"
-                        value={form[key as keyof typeof form]}
-                        onChange={(e) =>
-                          update(key as keyof typeof form, e.target.value)
-                        }
-                      />
-                    </label>
-                  ))}
+                <div className="date-fields">
+                  <label>
+                    Estimated cost
+                    <input
+                      type="number"
+                      min="0"
+                      value={form.estimated_cost}
+                      onChange={(e) => update("estimated_cost", e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Contractor
+                    <input
+                      value={form.contractor_name}
+                      onChange={(e) => update("contractor_name", e.target.value)}
+                    />
+                  </label>
                 </div>
-                <label>
-                  Contractor
-                  <input
-                    value={form.contractor_name}
-                    onChange={(e) => update("contractor_name", e.target.value)}
-                  />
-                </label>
               </>
             )}
             {error && <p className="form-error">{error}</p>}

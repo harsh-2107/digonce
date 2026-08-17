@@ -10,14 +10,17 @@ import { API_BASE, useAuth } from "@/context/AuthContext";
 
 export type Project = {
   project_id: string;
+  created_at: string;
   project_name: string;
   description: string | null;
   department: string | null;
   project_type: string;
   urgency: string;
   status: string;
+  is_joint_project: boolean;
   start_date: string;
-  end_date: string;
+  duration?: string | null;
+  end_date: string | null;
   corridor_length_m: number | null;
   duration_days: number | null;
   estimated_cost: number | null;
@@ -30,18 +33,30 @@ export type Project = {
   geometry: GeoJSON.LineString;
   excavation_geometry: GeoJSON.Polygon | null;
   risk_level: string;
+  grouping_status: string;
   coordination_opportunity: string;
+  coordination_status: string;
+  noc_summary?: {
+    given: number;
+    total: number;
+    all_cleared: boolean;
+    departments: { department: string; status: string }[];
+  };
 };
 export type NewProject = Omit<
   Project,
   | "project_id"
+  | "created_at"
   | "status"
+  | "is_joint_project"
   | "department"
   | "excavation_geometry"
   | "corridor_length_m"
   | "duration_days"
   | "risk_level"
+  | "grouping_status"
   | "coordination_opportunity"
+  | "coordination_status"
 >;
 type ProjectsContextValue = {
   projects: Project[];
@@ -51,6 +66,7 @@ type ProjectsContextValue = {
   submitProject: (id: string) => Promise<Project>;
   updateProject: (id: string, project: Partial<NewProject>) => Promise<Project>;
   deleteProject: (id: string) => Promise<void>;
+  discardProject: (id: string, reason?: string) => Promise<Project>;
   refreshProjects: () => Promise<void>;
 };
 const ProjectsContext = createContext<ProjectsContextValue | undefined>(
@@ -127,6 +143,14 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     await request(`/projects/${id}`, { method: "DELETE" });
     setProjects((current) => current.filter((item) => item.project_id !== id));
   };
+  const discardProject = async (id: string, reason?: string) => {
+    const discarded = await request(`/projects/${id}/discard`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    });
+    setProjects((current) => current.map((project) => project.project_id === id ? discarded : project));
+    return discarded;
+  };
   return (
     <ProjectsContext.Provider
       value={{
@@ -137,6 +161,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
         submitProject,
         updateProject,
         deleteProject,
+        discardProject,
         refreshProjects,
       }}
     >
