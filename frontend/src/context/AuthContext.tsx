@@ -16,10 +16,10 @@ type AuthContextValue = {
 };
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-// API base URL - uses relative path for API calls via proxy
-export const API_BASE = import.meta.env.PROD
-  ? "/api"
-  : (import.meta.env.VITE_API_URL ?? "http://localhost:8001");
+// API base URL - reads VITE_API_URL env var, falling back to relative /api in prod or localhost in dev
+export const API_BASE =
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.PROD ? "/api" : "http://localhost:8001");
 export function authHeaders(): Record<string, string> {
   const token = sessionStorage.getItem("dig-once-token");
   return token ? { Authorization: `Bearer ${token}` } : {};
