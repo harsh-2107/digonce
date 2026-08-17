@@ -1,6 +1,8 @@
 import { Building2, LogOut, MapPinned, Waves } from "lucide-react";
+import { NavLink } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-const departmentNames = {
+
+const departmentNames: Record<string, string> = {
   water: "Water Supply",
   sewage: "Sewage",
   drainage: "Drainage",
@@ -8,6 +10,7 @@ const departmentNames = {
   fibre: "Fibre Network",
   "super-admin": "All departments",
 };
+
 export function DashboardSidebar() {
   const { user, logout } = useAuth();
   if (!user) return null;
@@ -23,15 +26,15 @@ export function DashboardSidebar() {
         </span>
       </div>
       <p className="side-label">WORKSPACE</p>
-      <button className="nav-item active">
+      <NavLink to="/dashboard" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
         <Building2 size={18} /> Overview
-      </button>
-      <button className="nav-item">
+      </NavLink>
+      <NavLink to="/map" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
         <MapPinned size={18} /> Infrastructure map
-      </button>
-      <button className="nav-item">
-        <Waves size={18} /> Planned works <span className="badge">3</span>
-      </button>
+      </NavLink>
+      <NavLink to="/ongoing-projects" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
+        <Waves size={18} /> Planned works
+      </NavLink>
       <p className="side-label">ACCESS</p>
       <button className="nav-item department">
         <i>{isAdmin ? "★" : "●"}</i>

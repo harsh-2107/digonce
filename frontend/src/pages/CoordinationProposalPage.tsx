@@ -7,6 +7,24 @@ import type { Project } from "@/context/ProjectsContext";
 import { useAuth } from "@/context/AuthContext";
 import "@/App.css";
 
+type NocDeptStatus = {
+  department: string;
+  status: "NOT_REQUIRED" | "NOC_GIVEN" | "PENDING" | "NOC_WITHDRAWN";
+  given_by: string | null;
+  given_at: string | null;
+  withdrawn_at?: string | null;
+  comment: string | null;
+};
+
+type NocStatus = {
+  project_id: string;
+  owner_department: string;
+  given: number;
+  total: number;
+  all_cleared: boolean;
+  departments: NocDeptStatus[];
+};
+
 export function CoordinationProposalPage() {
   const { proposalId } = useParams();
   const [data, setData] = useState<any>(null);
@@ -16,6 +34,12 @@ export function CoordinationProposalPage() {
   const [comments, setComments] = useState<any[]>([]);
   const [comment, setComment] = useState("");
   const { user } = useAuth();
+
+  // NOC state per project_id
+  const [nocMap, setNocMap] = useState<Record<string, NocStatus>>({});
+  const [nocLoading, setNocLoading] = useState<Record<string, boolean>>({});
+  const [nocError, setNocError] = useState<string | null>(null);
+
   const load = () =>
     fetch(`${API_BASE}/coordination/proposals/${proposalId}`, {
       headers: authHeaders(),
@@ -23,15 +47,88 @@ export function CoordinationProposalPage() {
       .then((r) => r.json())
       .then(setData)
       .catch((e) => setError(e.message));
+
   useEffect(() => {
     load();
   }, [proposalId]);
+
   useEffect(() => {
     if (!data?.group?.id) return;
     fetch(`${API_BASE}/coordination/groups/${data.group.id}/comments`, { headers: authHeaders() })
       .then((response) => response.ok ? response.json() : [])
       .then(setComments);
   }, [data?.group?.id]);
+
+  // Load NOC status for each participating project when group is accepted
+  useEffect(() => {
+    const groupStatus = data?.group?.status;
+    const projects: Project[] = data?.projects ?? [];
+    if (!groupStatus || !["APPROVED", "CONFIRMED", "SCHEDULED", "COMPLETED"].includes(groupStatus)) return;
+    if (!projects.length) return;
+
+    projects.forEach((p: Project) => {
+      fetch(`${API_BASE}/projects/${p.project_id}/noc`, { headers: authHeaders() })
+        .then((r) => r.ok ? r.json() : null)
+        .then((noc) => {
+          if (noc) setNocMap((prev) => ({ ...prev, [p.project_id]: noc }));
+        })
+        .catch(() => {});
+    });
+  }, [data?.group?.status, data?.projects]);
+
+  async function giveNoc(projectId: string) {
+    setNocError(null);
+    setNocLoading((prev) => ({ ...prev, [projectId]: true }));
+    try {
+      const r = await fetch(`${API_BASE}/projects/${projectId}/noc`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({}),
+      });
+      const payload = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setNocError(typeof payload.detail === "string" ? payload.detail : "Unable to give No Objection");
+      } else {
+        // Refresh NOC status for this project
+        const nocR = await fetch(`${API_BASE}/projects/${projectId}/noc`, { headers: authHeaders() });
+        if (nocR.ok) {
+          const noc = await nocR.json();
+          setNocMap((prev) => ({ ...prev, [projectId]: noc }));
+        }
+      }
+    } catch (err) {
+      setNocError(err instanceof Error ? err.message : "Unable to give No Objection");
+    } finally {
+      setNocLoading((prev) => ({ ...prev, [projectId]: false }));
+    }
+  }
+
+  async function withdrawNoc(projectId: string) {
+    if (!window.confirm("Are you sure you want to withdraw your No Objection? The project owner will be notified and approval will be blocked.")) return;
+    setNocError(null);
+    setNocLoading((prev) => ({ ...prev, [projectId]: true }));
+    try {
+      const r = await fetch(`${API_BASE}/projects/${projectId}/noc`, {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
+      const payload = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setNocError(typeof payload.detail === "string" ? payload.detail : "Unable to withdraw No Objection");
+      } else {
+        const nocR = await fetch(`${API_BASE}/projects/${projectId}/noc`, { headers: authHeaders() });
+        if (nocR.ok) {
+          const noc = await nocR.json();
+          setNocMap((prev) => ({ ...prev, [projectId]: noc }));
+        }
+      }
+    } catch (err) {
+      setNocError(err instanceof Error ? err.message : "Unable to withdraw No Objection");
+    } finally {
+      setNocLoading((prev) => ({ ...prev, [projectId]: false }));
+    }
+  }
+
   const respond = async (action: "accept" | "reject") => {
     setError(null);
     const r = await fetch(
@@ -50,6 +147,7 @@ export function CoordinationProposalPage() {
     }
     setData(await r.json());
   };
+
   const postComment = async () => {
     if (!comment.trim() || !data) return;
     const response = await fetch(`${API_BASE}/coordination/groups/${data.group.id}/comments`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() }, body: JSON.stringify({ message: comment }) });
@@ -58,12 +156,14 @@ export function CoordinationProposalPage() {
     setComments((current) => [...current, createdComment]);
     setComment("");
   };
+
   const groupAction = async (path: string) => {
     if (!data) return;
     const response = await fetch(`${API_BASE}/coordination/groups/${data.group.id}${path}`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() }, body: path === "/revoke" ? JSON.stringify({ message: "Coordination revoked for review." }) : undefined });
     if (!response.ok) { setError((await response.json()).detail); return; }
     load();
   };
+
   if (!data)
     return (
       <main className="app-page">
@@ -71,8 +171,12 @@ export function CoordinationProposalPage() {
         <section className="page-content">Loading proposal…</section>
       </main>
     );
+
   const p = data.proposal;
   const userResponded = data.responses?.some((r: any) => r.department === user?.department);
+  const groupStatus: string = data.group.status;
+  const nocGroupActive = ["APPROVED", "CONFIRMED", "SCHEDULED", "COMPLETED"].includes(groupStatus);
+
   return (
     <main className="app-page">
       <TopNav />
@@ -116,6 +220,109 @@ export function CoordinationProposalPage() {
             </article>
           ))}
         </div>
+
+        {/* ── NOC Section for accepted coordination group ── */}
+        {nocGroupActive && (
+          <section className="noc-panel" style={{ marginTop: "2rem" }}>
+            <h2 className="section-title">No Objection Certificates (NOC)</h2>
+            <p className="page-intro">
+              Coordination is separate from NOC. Each participating department must still give formal No Objection for projects they do not own.
+            </p>
+            {nocError && <p className="form-error">{nocError}</p>}
+            {data.projects.map((project: Project) => {
+              const noc = nocMap[project.project_id];
+              const ownerDept = project.department;
+              const isOwner = user?.department === ownerDept;
+              const myNocRecord = noc?.departments.find((d) => d.department === user?.department);
+              const myNocNotRequired = myNocRecord?.status === "NOT_REQUIRED";
+              const loading = nocLoading[project.project_id] ?? false;
+
+              return (
+                <div key={`noc-${project.project_id}`} style={{ marginBottom: "1.5rem", padding: "1rem 1.25rem", background: "var(--card-bg, #f8fafc)", border: "1px solid var(--border, #e2e8f0)", borderRadius: "10px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px", marginBottom: "0.75rem" }}>
+                    <div>
+                      <strong>{project.project_name}</strong>
+                      <span style={{ marginLeft: "8px", fontSize: "12px", color: "#64748b" }}>
+                        Owned by: {ownerDept?.replaceAll("-", " ")}
+                      </span>
+                    </div>
+                    {noc && (
+                      <span style={{ fontSize: "12px", color: "#475569" }}>
+                        NOC: {noc.given}/{noc.total} departments cleared
+                        {noc.all_cleared && <span className="status-pill noc-given" style={{ marginLeft: "8px" }}>All Cleared ✅</span>}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Owner view — NOC progress tracker */}
+                  {isOwner && noc && (
+                    <div className="noc-dept-list">
+                      {noc.departments.map((dept) =>
+                        dept.status !== "NOT_REQUIRED" ? (
+                          <div key={dept.department} className="noc-dept-row">
+                            <span className="noc-dept-name">{dept.department.replaceAll("-", " ")}</span>
+                            {dept.status === "NOC_GIVEN"
+                              ? <span className="status-pill noc-given">No Objection ✓</span>
+                              : dept.status === "NOC_WITHDRAWN"
+                              ? <span className="status-pill noc-withdrawn">Withdrawn</span>
+                              : <span className="status-pill noc-pending">Pending</span>
+                            }
+                          </div>
+                        ) : null
+                      )}
+                    </div>
+                  )}
+
+                  {/* Non-owner three-state NOC action */}
+                  {!isOwner && !myNocNotRequired && (
+                    <div className="noc-coord-actions">
+                      {myNocRecord?.status === "NOC_GIVEN" ? (
+                        <>
+                          <span className="status-pill noc-given">No Objection Given ✓</span>
+                          <button
+                            className="danger-button"
+                            onClick={() => void withdrawNoc(project.project_id)}
+                            disabled={loading}
+                          >
+                            {loading ? "Withdrawing…" : "Withdraw NOC"}
+                          </button>
+                        </>
+                      ) : myNocRecord?.status === "NOC_WITHDRAWN" ? (
+                        <>
+                          <span className="status-pill noc-withdrawn">NOC Withdrawn</span>
+                          <button
+                            className="primary-button"
+                            onClick={() => void giveNoc(project.project_id)}
+                            disabled={loading}
+                          >
+                            {loading ? "Submitting…" : "Give No Objection Again"}
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          className="primary-button"
+                          onClick={() => void giveNoc(project.project_id)}
+                          disabled={loading}
+                        >
+                          {loading ? "Submitting…" : "Give No Objection"}
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {!isOwner && myNocNotRequired && (
+                    <p style={{ color: "#64748b", fontSize: "13px", margin: 0 }}>NOC not required from your department for this project.</p>
+                  )}
+
+                  {!noc && (
+                    <p style={{ color: "#94a3b8", fontSize: "13px", margin: 0 }}>Loading NOC status…</p>
+                  )}
+                </div>
+              );
+            })}
+          </section>
+        )}
+
         {p.status === "PENDING" && !userResponded && (
           <div className="response-panel">
             <h2>Respond to proposal</h2>

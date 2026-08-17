@@ -9,6 +9,7 @@ import { CoordinationPage } from "@/pages/CoordinationPage";
 import { OngoingProjectsPage } from "@/pages/OngoingProjectsPage";
 import { CoordinationProposalPage } from "@/pages/CoordinationProposalPage";
 import { ProjectGroupPage } from "@/pages/ProjectGroupPage";
+import { DashboardPage } from "@/pages/DashboardPage";
 import { GisProvider } from "@/context/GisContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 
@@ -17,6 +18,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route element={<ProtectedRoute />}>
+        <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/map" element={<GisProvider><MapPage /></GisProvider>} />
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
