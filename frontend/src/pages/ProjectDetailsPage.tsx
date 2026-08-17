@@ -306,44 +306,6 @@ export function ProjectDetailsPage() {
       .catch((error) => setError(error.message));
   }, [projectId]);
 
-  async function propose(candidate: Project) {
-    if (!project) return;
-    setProposalError(null);
-    try {
-      const headers = { "Content-Type": "application/json", ...authHeaders() };
-      const groupResponse = await fetch(`${API_BASE}/coordination/groups`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          project_ids: [project.project_id, candidate.project_id],
-        }),
-      });
-      if (!groupResponse.ok)
-        throw new Error((await groupResponse.json()).detail);
-      const group = await groupResponse.json();
-      const proposalResponse = await fetch(
-        `${API_BASE}/coordination/groups/${group.group.id}/proposals`,
-        {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            proposed_start: group.group.recommended_start,
-            proposed_end: group.group.recommended_end,
-            message: `Coordinate ${project.project_name} with ${candidate.project_name}.`,
-          }),
-        },
-      );
-      if (!proposalResponse.ok)
-        throw new Error((await proposalResponse.json()).detail);
-      const proposal = await proposalResponse.json();
-      window.location.assign(`/coordination/proposals/${proposal.proposal_id}`);
-    } catch (err) {
-      setProposalError(
-        err instanceof Error ? err.message : "Unable to send proposal",
-      );
-    }
-  }
-
 
 
   async function giveNoc() {
