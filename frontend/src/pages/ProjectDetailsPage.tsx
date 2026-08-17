@@ -40,6 +40,24 @@ type NocStatus = {
   departments: NocDeptStatus[];
 };
 
+type ObjectionCandidate = {
+  project_id: string;
+  project_name: string;
+  department: string;
+  project_type: string | null;
+  status: string;
+  start_date: string | null;
+  end_date: string | null;
+  corridor_length_m: number | null;
+  distance_m: number;
+  spatial_overlap_m: number;
+  temporal_overlap_days: number;
+  schedule_gap_days: number;
+  compatibility?: string;
+  coordination_eligible?: boolean;
+  reasons?: string[];
+};
+
 /** Inner component: auto-fits the Leaflet map to the project corridor */
 function ProjectMapFit({ coordinates }: { coordinates: [number, number][] }) {
   const map = useMap();
@@ -49,6 +67,169 @@ function ProjectMapFit({ coordinates }: { coordinates: [number, number][] }) {
     if (bounds.isValid()) map.fitBounds(bounds, { padding: [40, 40] });
   }, [coordinates, map]);
   return null;
+}
+
+/** Objection modal — shown when a non-owner clicks Objection */
+function ObjectionModal({
+  candidates,
+  selectedIds,
+  onToggle,
+  onContinue,
+  onCancel,
+  loading,
+  error,
+  comment,
+  onCommentChange,
+}: {
+  candidates: ObjectionCandidate[];
+  selectedIds: Set<string>;
+  onToggle: (id: string) => void;
+  onContinue: () => void;
+  onCancel: () => void;
+  loading: boolean;
+  error: string | null;
+  comment: string;
+  onCommentChange: (v: string) => void;
+}) {
+  return (
+    <div
+      className="modal-backdrop"
+      onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Objection — Select projects for coordination"
+    >
+      <div className="modal-content" style={{ maxWidth: "560px", width: "100%" }}>
+        <div className="modal-heading">
+          <div>
+            <p className="eyebrow">RAISE OBJECTION</p>
+            <h2>Select Projects for Coordination</h2>
+          </div>
+          <button className="text-button" onClick={onCancel}>Close</button>
+        </div>
+
+        {candidates.length > 0 ? (
+          <>
+            <p className="page-intro" style={{ margin: "16px 0 14px" }}>
+              The following projects from your department may overlap with this proposed excavation.
+              Select any you want to coordinate together. Selection is optional — you can continue without selecting any.
+            </p>
+            <div className="project-list" style={{ marginBottom: "1rem" }}>
+              {candidates.map((c) => (
+                <label
+                  key={c.project_id}
+                  htmlFor={`obj-candidate-${c.project_id}`}
+                  style={{
+                    display: "flex",
+                    gap: "12px",
+                    alignItems: "flex-start",
+                    padding: "0.875rem 1rem",
+                    borderRadius: "8px",
+                    border: `1.5px solid ${selectedIds.has(c.project_id) ? "#087e8b" : "#d7e0e7"}`,
+                    background: selectedIds.has(c.project_id) ? "#f0f8f9" : "#f8fbfc",
+                    cursor: "pointer",
+                    transition: "border-color 0.15s, background 0.15s",
+                    marginBottom: "0.5rem",
+                  }}
+                >
+                  <input
+                    id={`obj-candidate-${c.project_id}`}
+                    type="checkbox"
+                    checked={selectedIds.has(c.project_id)}
+                    onChange={() => onToggle(c.project_id)}
+                    style={{ marginTop: "3px", flexShrink: 0, accentColor: "#087e8b" }}
+                  />
+                  <div style={{ flex: 1 }}>
+                    <strong style={{ fontSize: "14px", display: "block", color: "#20364a", marginBottom: "2px" }}>{c.project_name}</strong>
+                    <span style={{ fontSize: "12px", color: "#718096" }}>
+                      {c.start_date} – {c.end_date}
+                      {c.project_type && ` · ${c.project_type}`}
+                    </span>
+                    <div style={{ fontSize: "12px", color: "#40576a", marginTop: "4px", display: "flex", gap: "12px", flexWrap: "wrap" }}>
+                      {c.spatial_overlap_m > 0 && (
+                        <span>✓ Shared corridor: <strong>{c.spatial_overlap_m.toFixed(0)} m</strong></span>
+                      )}
+                      {c.spatial_overlap_m === 0 && (
+                        <span>✓ Distance: <strong>{c.distance_m.toFixed(0)} m</strong></span>
+                      )}
+                      {c.temporal_overlap_days > 0 && (
+                        <span>✓ Schedule overlap: <strong>{c.temporal_overlap_days} day{c.temporal_overlap_days !== 1 ? "s" : ""}</strong></span>
+                      )}
+                      {c.temporal_overlap_days === 0 && c.schedule_gap_days <= 14 && (
+                        <span>✓ Schedule gap: <strong>{c.schedule_gap_days} day{c.schedule_gap_days !== 1 ? "s" : ""}</strong></span>
+                      )}
+                      <span>✓ Compatible for coordinated execution</span>
+                    </div>
+                    <span
+                      className="status-pill"
+                      style={{ marginTop: "6px", display: "inline-block" }}
+                    >
+                      {c.status}
+                    </span>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </>
+        ) : (
+          <p className="page-intro" style={{ margin: "16px 0 14px" }}>
+            No projects from your department currently overlap with this excavation.
+            You can still raise an objection — use the comment below to describe your concern.
+          </p>
+        )}
+
+        <div style={{ margin: "1rem 0" }}>
+          <label
+            htmlFor="objection-comment"
+            style={{ display: "block", fontSize: "12px", fontWeight: 650, marginBottom: "6px", color: "#496174" }}
+          >
+            Comment / Reason <span style={{ fontWeight: 400, color: "#718096" }}>(optional)</span>
+          </label>
+          <textarea
+            id="objection-comment"
+            placeholder="Describe your concern or coordination requirements…"
+            value={comment}
+            onChange={(e) => onCommentChange(e.target.value)}
+            rows={3}
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              resize: "vertical",
+              font: '13px "Geist Variable", sans-serif',
+              border: "1px solid #d7e0e7",
+              borderRadius: "7px",
+              padding: "9px 10px",
+              background: "#fff",
+            }}
+          />
+        </div>
+
+        {candidates.length > 0 && (
+          <p style={{ fontSize: "12px", color: "#718096", margin: "0 0 1rem" }}>
+            {selectedIds.size === 0
+              ? "No projects selected — objection will proceed without project coordination."
+              : `${selectedIds.size} project${selectedIds.size !== 1 ? "s" : ""} selected for coordination.`}
+          </p>
+        )}
+
+        {error && <p className="form-error">{error}</p>}
+
+        <div className="modal-actions">
+          <button className="secondary-button" onClick={onCancel} disabled={loading}>
+            Cancel
+          </button>
+          <button
+            id="objection-continue-btn"
+            className="primary-button"
+            onClick={onContinue}
+            disabled={loading}
+          >
+            {loading ? "Submitting…" : "Continue"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function ProjectDetailsPage() {
@@ -69,6 +250,15 @@ export function ProjectDetailsPage() {
   const [nocLoading, setNocLoading] = useState(false);
   const [nocError, setNocError] = useState<string | null>(null);
   const [withdrawLoading, setWithdrawLoading] = useState(false);
+
+  // --- Objection state ---
+  const [objectionCandidates, setObjectionCandidates] = useState<ObjectionCandidate[] | null>(null);
+  const [showObjectionModal, setShowObjectionModal] = useState(false);
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<Set<string>>(new Set());
+  const [objectionComment, setObjectionComment] = useState("");
+  const [objectionLoading, setObjectionLoading] = useState(false);
+  const [objectionFetchLoading, setObjectionFetchLoading] = useState(false);
+  const [objectionError, setObjectionError] = useState<string | null>(null);
 
   function loadNoc() {
     const token = sessionStorage.getItem("dig-once-token");
@@ -154,28 +344,7 @@ export function ProjectDetailsPage() {
     }
   }
 
-  async function requestCoordination() {
-    if (!project) return;
-    setProposalError(null);
-    try {
-      const headers = { "Content-Type": "application/json", ...authHeaders() };
-      const groupResponse = await fetch(`${API_BASE}/coordination/groups`, {
-        method: "POST", headers, body: JSON.stringify({ project_ids: [project.project_id] }),
-      });
-      const groupPayload = await groupResponse.json().catch(() => ({}));
-      if (!groupResponse.ok) throw new Error(groupPayload.detail ?? "Unable to open coordination request");
-      const group = groupPayload.group;
-      const proposalResponse = await fetch(`${API_BASE}/coordination/groups/${group.id}/proposals`, {
-        method: "POST", headers,
-        body: JSON.stringify({ proposed_start: project.start_date, proposed_end: project.end_date, message: `Coordination requested for ${project.project_name}.` }),
-      });
-      const proposal = await proposalResponse.json().catch(() => ({}));
-      if (!proposalResponse.ok) throw new Error(proposal.detail ?? "Unable to send coordination request");
-      window.location.assign(`/coordination/proposals/${proposal.proposal_id}`);
-    } catch (err) {
-      setProposalError(err instanceof Error ? err.message : "Unable to send coordination request");
-    }
-  }
+
 
   async function giveNoc() {
     if (!project) return;
@@ -227,6 +396,90 @@ export function ProjectDetailsPage() {
     }
   }
 
+  /** Open objection flow: fetch candidates first.
+   * If candidates exist → show selection modal.
+   * If no candidates → submit objection immediately (no project coordination needed).
+   */
+  async function handleObjectionClick() {
+    if (!project) return;
+    setObjectionError(null);
+    setObjectionFetchLoading(true);
+    try {
+      const response = await fetch(
+        `${API_BASE}/projects/${project.project_id}/objection-candidates`,
+        { headers: authHeaders() },
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setObjectionError(typeof data.detail === "string" ? data.detail : "Unable to check for related projects");
+        return;
+      }
+      const candidates: ObjectionCandidate[] = data.candidates ?? [];
+      setObjectionCandidates(candidates);
+      setObjectionComment("");
+
+      if (candidates.length === 0) {
+        // No candidates — submit objection directly without the modal
+        setObjectionFetchLoading(false);
+        await submitObjectionWith([], "");
+        return;
+      }
+
+      // Candidates exist — pre-select all, show modal for the user to review
+      setSelectedCandidateIds(new Set(candidates.map((c) => c.project_id)));
+      setShowObjectionModal(true);
+    } catch (err) {
+      setObjectionError(err instanceof Error ? err.message : "Unable to check for related projects");
+    } finally {
+      setObjectionFetchLoading(false);
+    }
+  }
+
+  function toggleCandidate(id: string) {
+    setSelectedCandidateIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  /** Core submission — called from the modal Continue button or directly when there are no candidates. */
+  async function submitObjectionWith(projectIds: string[], comment: string) {
+    if (!project) return;
+    setObjectionError(null);
+    setObjectionLoading(true);
+    try {
+      const response = await fetch(
+        `${API_BASE}/projects/${project.project_id}/objection`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          body: JSON.stringify({
+            selected_project_ids: projectIds,
+            comment: comment.trim() || null,
+          }),
+        },
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setObjectionError(
+          typeof data.detail === "string" ? data.detail : "Unable to submit objection",
+        );
+        return;
+      }
+      window.location.assign(`/coordination/proposals/${data.proposal_id}`);
+    } catch (err) {
+      setObjectionError(err instanceof Error ? err.message : "Unable to submit objection");
+    } finally {
+      setObjectionLoading(false);
+    }
+  }
+
+  async function submitObjection() {
+    await submitObjectionWith(Array.from(selectedCandidateIds), objectionComment);
+  }
+
   async function group(candidate: any) {
     if (!project) return;
     setProposalError(null);
@@ -276,13 +529,18 @@ export function ProjectDetailsPage() {
   // privileges must not make a non-owning department look like the owner.
   const ownsProject = !!project && project.department === user?.department;
   const canManageProject = ownsProject || user?.role === "Super Admin";
-  const ownRequest = coordination?.coordination_requests.find((request) => request.requesting_department === user?.department);
 
   // NOC helpers
   const myNocRecord = nocStatus?.departments.find(
     (d) => d.department === user?.department
   );
   const myNocNotRequired = myNocRecord?.status === "NOT_REQUIRED";
+
+  // Show the objection/NOC action panel when:
+  // - the user does NOT own the project
+  // - their NOC is required (not NOT_REQUIRED)
+  // - and the project is not discarded
+  const showNocActionsPanel = !ownsProject && !myNocNotRequired && project?.status !== "DISCARDED";
 
   return (
     <main className="app-page">
@@ -363,7 +621,7 @@ export function ProjectDetailsPage() {
             </div>}
             </section>
 
-            {/* ── NOC Section ── */}
+            {/* ── NOC Section (owner view) ── */}
 
             {ownsProject && nocStatus && (
               <section className="noc-panel">
@@ -392,20 +650,10 @@ export function ProjectDetailsPage() {
               </section>
             )}
 
-            {/* ── Non-owner: three-state NOC action area ── */}
-            {!ownsProject && !myNocNotRequired && (
+            {/* ── Non-owner: No Objection / Objection action area ── */}
+            {showNocActionsPanel && (
               <div className="noc-actions-panel">
                 <div className="noc-coord-actions">
-                  {ownRequest ? (
-                    <>
-                      <strong>Your coordination request</strong>
-                      <span className="status-pill">{(ownRequest.proposal_status ?? ownRequest.status).replaceAll("_", " ")}</span>
-                    </>
-                  ) : (
-                    <button className="secondary-button" onClick={() => void requestCoordination()}>
-                      Request Coordination
-                    </button>
-                  )}
                   {myNocRecord?.status === "NOC_GIVEN" ? (
                     <>
                       <span className="status-pill noc-given">No Objection Given ✓</span>
@@ -421,24 +669,45 @@ export function ProjectDetailsPage() {
                     <>
                       <span className="status-pill noc-withdrawn">NOC Withdrawn</span>
                       <button
+                        id="give-noc-btn"
                         className="primary-button"
                         onClick={() => void giveNoc()}
                         disabled={nocLoading}
                       >
-                        {nocLoading ? "Submitting…" : "Give No Objection Again"}
+                        {nocLoading ? "Submitting…" : "No Objection"}
+                      </button>
+                      <button
+                        id="raise-objection-btn"
+                        className="danger-button"
+                        onClick={() => void handleObjectionClick()}
+                        disabled={nocLoading || objectionFetchLoading}
+                      >
+                        {objectionFetchLoading ? "Checking…" : "Objection"}
                       </button>
                     </>
                   ) : (
-                    <button
-                      className="primary-button"
-                      onClick={() => void giveNoc()}
-                      disabled={nocLoading}
-                    >
-                      {nocLoading ? "Submitting…" : "Give No Objection"}
-                    </button>
+                    <>
+                      <button
+                        id="give-noc-btn"
+                        className="primary-button"
+                        onClick={() => void giveNoc()}
+                        disabled={nocLoading || objectionFetchLoading}
+                      >
+                        {nocLoading ? "Submitting…" : "No Objection"}
+                      </button>
+                      <button
+                        id="raise-objection-btn"
+                        className="danger-button"
+                        onClick={() => void handleObjectionClick()}
+                        disabled={nocLoading || objectionFetchLoading}
+                      >
+                        {objectionFetchLoading ? "Checking…" : "Objection"}
+                      </button>
+                    </>
                   )}
                 </div>
                 {nocError && <p className="form-error">{nocError}</p>}
+                {objectionError && !showObjectionModal && <p className="form-error">{objectionError}</p>}
               </div>
             )}
 
@@ -496,23 +765,6 @@ export function ProjectDetailsPage() {
                 </div>
               )}
             </>}
-            <h2 className="section-title">Related / Coordinatable Projects</h2>
-            <p className="page-intro">Potential project matches ranked by the existing Coordination Score.</p>
-            {coordination?.projects.length ? (
-              <div className="project-list">
-                {coordination.projects.map((candidate) => (
-                  <article className="project-card" key={candidate.project_id}>
-                    <div className="project-body">
-                      <h3>{candidate.project_name}</h3>
-                      <p>{candidate.department?.replaceAll("-", " ")} · Tentative Start: {candidate.start_date}{candidate.duration ? ` · Duration: ${candidate.duration}` : candidate.end_date ? ` → ${candidate.end_date}` : ""}</p>
-                      {candidate.analysis && <div className="coordination-analysis-summary"><strong>{candidate.analysis.coordination_score.score}/100 · {candidate.analysis.coordination_score.level.replaceAll("_", " ")}</strong><span>{candidate.analysis.recommendation.replaceAll("_", " ")}</span></div>}
-                      <div className="project-actions"><button className="secondary-button" onClick={() => setDetailsModalProject(candidate)}>View details</button>{canManageProject && project.status !== "DISCARDED" && candidate.analysis?.recommendation !== "DO_NOT_COORDINATE" && <button className="primary-button" onClick={() => void propose(candidate)}>Propose Coordination</button>}</div>
-                    </div>
-                    <span className="status-pill">{candidate.status}</span>
-                  </article>
-                ))}
-              </div>
-            ) : <div className="empty-state">No related active projects currently meet the existing coordination match rules.</div>}
           </>
         )}
       </section>
@@ -529,6 +781,24 @@ export function ProjectDetailsPage() {
           setProject(updated);
         }}
       />
+
+      {/* ── Objection Selection Modal ── */}
+      {showObjectionModal && objectionCandidates !== null && (
+        <ObjectionModal
+          candidates={objectionCandidates}
+          selectedIds={selectedCandidateIds}
+          onToggle={toggleCandidate}
+          onContinue={() => void submitObjection()}
+          onCancel={() => {
+            setShowObjectionModal(false);
+            setObjectionError(null);
+          }}
+          loading={objectionLoading}
+          error={objectionError}
+          comment={objectionComment}
+          onCommentChange={setObjectionComment}
+        />
+      )}
     </main>
   );
 }

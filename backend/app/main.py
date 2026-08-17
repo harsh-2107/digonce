@@ -160,7 +160,7 @@ with engine.begin() as conn:
         CREATE TABLE IF NOT EXISTS coordination_groups (
             id UUID PRIMARY KEY, group_code VARCHAR UNIQUE NOT NULL, name VARCHAR NOT NULL,
             recommended_start DATE, recommended_end DATE, final_start DATE, final_end DATE,
-            coordination_type VARCHAR NOT NULL, coordination_score INTEGER NOT NULL,
+            coordination_type VARCHAR NOT NULL, coordination_score INTEGER NULL,
             estimated_savings NUMERIC NOT NULL DEFAULT 0, status VARCHAR NOT NULL DEFAULT 'PENDING',
             created_by VARCHAR NOT NULL REFERENCES users(user_id), created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         );
@@ -199,6 +199,7 @@ with engine.begin() as conn:
         );
         ALTER TABLE coordination_proposals ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
         ALTER TABLE coordination_comments ADD COLUMN IF NOT EXISTS proposal_id UUID NULL REFERENCES coordination_proposals(id) ON DELETE CASCADE;
+        ALTER TABLE coordination_groups ALTER COLUMN coordination_score DROP NOT NULL;
         CREATE TABLE IF NOT EXISTS coordination_confirmations (
           id UUID PRIMARY KEY, group_id UUID NOT NULL REFERENCES coordination_groups(id) ON DELETE CASCADE,
           department VARCHAR NOT NULL, confirmed_by VARCHAR NOT NULL REFERENCES users(user_id), confirmed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -744,6 +745,10 @@ class NOCCreate(BaseModel):
 class CoordinationCommentCreate(BaseModel):
     message: str
 
+class ObjectionCreate(BaseModel):
+    selected_project_ids: list[str] = []
+    comment: str | None = None
+
 
 # --- App ---
 app = FastAPI(title="Municipal GIS Backend")
@@ -1004,6 +1009,54 @@ def gemini_explanation(analysis: dict) -> str:
         return ""
     except (urlerror.URLError, KeyError, IndexError, json.JSONDecodeError):
         return ""
+
+def is_project_coordinable(submitted: Project, candidate: Project, db) -> tuple[bool, dict]:
+    """
+    Deterministic coordination-feasibility check.
+    Evaluates spatial compatibility, temporal compatibility, project/status eligibility,
+    and work/utility compatibility rules.
+    Returns (is_coordinable: bool, details: dict).
+    """
+    if candidate.status in {"DISCARDED", "Completed", "Cancelled", "Rejected"}:
+        return False, {"reason": "Candidate status is not eligible for coordination"}
+    if not candidate.geometry or not candidate.start_date or not candidate.end_date:
+        return False, {"reason": "Candidate lacks geometry or scheduled dates"}
+    if candidate.department_id == submitted.department_id:
+        return False, {"reason": "Candidate belongs to the same department as the submitted project"}
+
+    analysis = coordination_pair_analysis(submitted, candidate, db)
+    checks = analysis.get("checks", {})
+    spatial = checks.get("spatial", {})
+    temporal = checks.get("temporal", {})
+    distance = float(spatial.get("distance_m", 9999))
+    shared_m = float(spatial.get("shared_corridor_m", 0))
+    overlap_days = int(temporal.get("overlap_days", 0))
+    gap_days = int(temporal.get("schedule_gap_days", 9999))
+    hard_blockers = analysis.get("hard_blockers", [])
+    recommendation = analysis.get("recommendation", "")
+
+    # Rule 1: Must not have hard blockers or recommendation 'DO_NOT_COORDINATE'
+    if hard_blockers or recommendation == "DO_NOT_COORDINATE":
+        return False, {"reason": "Hard blockers or restricted compatibility", "blockers": hard_blockers}
+
+    # Rule 2: Spatial criteria - distance <= 75 m or shared corridor > 0 m
+    spatial_eligible = (distance <= 75) or (shared_m > 0)
+
+    # Rule 3: Temporal criteria - schedule overlap > 0 days or schedule gap <= 14 days
+    temporal_eligible = (overlap_days > 0) or (gap_days <= 14)
+
+    is_coordinable = spatial_eligible and temporal_eligible
+    details = {
+        "distance_m": distance,
+        "shared_corridor_m": shared_m,
+        "overlap_days": overlap_days,
+        "schedule_gap_days": gap_days,
+        "compatibility": checks.get("work_compatibility", {}).get("result", "UNKNOWN"),
+        "coordination_eligible": is_coordinable,
+        "reasons": analysis.get("reasons", []),
+        "warnings": analysis.get("warnings", []),
+    }
+    return is_coordinable, details
 
 def coordination_pair_analysis(project: Project, candidate: Project, db, include_gemini=False) -> dict:
     spatial = db.execute(text("""
@@ -1289,6 +1342,201 @@ def get_completed_projects_near(
         "projects": result_projects,
     }
 
+@app.get("/projects/{project_id}/objection-candidates")
+def get_objection_candidates(
+    project_id: str,
+    db=Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return projects from the authenticated user's department that pass deterministic
+    coordination feasibility rules. Used to pre-populate the objection selection modal."""
+    submitted = db.query(Project).filter(Project.project_id == project_id).first()
+    if not submitted:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if submitted.department_id == current_user.department:
+        raise HTTPException(status_code=409, detail="The owning department cannot raise an objection against its own project")
+    if current_user.department not in ALL_DEPARTMENTS:
+        raise HTTPException(status_code=403, detail="Only department users can raise objections")
+
+    # Fetch all active projects from the current user's dept
+    dept_projects = db.query(Project).filter(
+        Project.department_id == current_user.department,
+        Project.status.notin_(["DISCARDED", "Completed", "Cancelled", "Rejected"]),
+    ).all()
+
+    candidates = []
+    for dp in dept_projects:
+        try:
+            coordinable, details = is_project_coordinable(submitted, dp, db)
+        except Exception:
+            continue
+        if not coordinable:
+            continue
+
+        candidates.append({
+            "project_id": str(dp.project_id),
+            "project_code": dp.project_name,
+            "project_name": dp.project_name,
+            "department": dp.department_id,
+            "project_type": dp.project_type,
+            "status": dp.status,
+            "start_date": dp.start_date.isoformat() if dp.start_date else None,
+            "end_date": dp.end_date.isoformat() if dp.end_date else None,
+            "corridor_length_m": float(dp.corridor_length_m) if dp.corridor_length_m else None,
+            "distance_m": details["distance_m"],
+            "minimum_distance_m": details["distance_m"],
+            "spatial_overlap_m": details["shared_corridor_m"],
+            "temporal_overlap_days": details["overlap_days"],
+            "schedule_gap_days": details["schedule_gap_days"],
+            "compatibility": details["compatibility"],
+            "coordination_eligible": True,
+            "reasons": details["reasons"],
+        })
+
+    return {
+        "submitted_project_id": project_id,
+        "candidates": candidates,
+    }
+
+
+@app.post("/projects/{project_id}/objection")
+def raise_objection(
+    project_id: str,
+    payload: ObjectionCreate,
+    db=Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Submit an objection against a project. Optionally attach departmental projects to create
+    a coordination group. If no projects are selected the objection enters the comments/discussion flow."""
+    submitted = db.query(Project).filter(Project.project_id == project_id).first()
+    if not submitted:
+        raise HTTPException(status_code=404, detail="Project not found")
+    ensure_project_is_not_discarded(submitted)
+    if submitted.department_id == current_user.department:
+        raise HTTPException(status_code=409, detail="The owning department cannot raise an objection against its own project")
+    if current_user.department not in ALL_DEPARTMENTS:
+        raise HTTPException(status_code=403, detail="Only department users can raise objections")
+
+    # --- Validate selected project IDs ---
+    selected_projects: list[Project] = []
+    if payload.selected_project_ids:
+        deduped_ids = list(dict.fromkeys(payload.selected_project_ids))
+        for sel_id in deduped_ids:
+            dp = db.query(Project).filter(Project.project_id == sel_id).first()
+            if not dp:
+                raise HTTPException(status_code=404, detail=f"Project {sel_id} not found")
+            if dp.department_id != current_user.department:
+                raise HTTPException(status_code=403, detail=f"Project {sel_id} does not belong to your department")
+            if dp.status in {"DISCARDED", "Cancelled", "Rejected"}:
+                raise HTTPException(status_code=409, detail=f"Project {sel_id} is no longer eligible for coordination")
+            # Validate spatial/temporal feasibility rules
+            try:
+                coordinable, details = is_project_coordinable(submitted, dp, db)
+            except Exception:
+                raise HTTPException(status_code=422, detail=f"Could not perform feasibility analysis for project {sel_id}")
+            if not coordinable:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Project {dp.project_name} does not meet coordination feasibility criteria",
+                )
+            selected_projects.append(dp)
+
+    # --- Build the project list for the coordination group ---
+    all_project_ids = [str(submitted.project_id)] + [str(p.project_id) for p in selected_projects]
+    all_projects = [submitted] + selected_projects
+
+    # --- Compute recommended window and score ---
+    window = common_window(all_projects) if len(all_projects) > 1 else (submitted.start_date, submitted.end_date)
+    if not window:
+        window = (submitted.start_date, submitted.end_date)
+
+    # Score is ONLY calculated if at least one candidate project was selected
+    if len(selected_projects) > 0:
+        pair_scores = []
+        for i, left in enumerate(all_projects):
+            for right in all_projects[i + 1:]:
+                try:
+                    pair_scores.append(coordination_pair_analysis(left, right, db)["coordination_score"]["score"])
+                except Exception:
+                    pass
+        score = round(sum(pair_scores) / len(pair_scores)) if pair_scores else None
+    else:
+        score = None
+
+    # --- Create coordination group ---
+    gid = str(uuid.uuid4())
+    code = f"CG-{datetime.now().strftime('%y%m%d')}-{uuid.uuid4().hex[:4].upper()}"
+    group_name = f"Objection coordination — {submitted.project_name}"
+    db.execute(text("""
+        INSERT INTO coordination_groups
+          (id, group_code, name, recommended_start, recommended_end, coordination_type, coordination_score, estimated_savings, created_by)
+        VALUES (:id,:code,:name,:start,:end,'OBJECTION_COORDINATION',:score,:savings,:creator)
+    """), {
+        "id": gid, "code": code, "name": group_name,
+        "start": window[0], "end": window[1],
+        "score": score,
+        "savings": sum(float(p.restoration_cost or 0) for p in selected_projects),
+        "creator": current_user.user_id,
+    })
+    for pid in all_project_ids:
+        db.execute(text("INSERT INTO coordination_group_projects (group_id, project_id) VALUES (:g, :p)"), {"g": gid, "p": pid})
+
+    audit(db, current_user.user_id, "OBJECTION_RAISED", "coordination_group", gid, {
+        "submitted_project_id": project_id,
+        "selected_project_ids": [str(p.project_id) for p in selected_projects],
+        "comment": payload.comment,
+    })
+
+    # --- Create coordination proposal ---
+    prop_id = str(uuid.uuid4())
+    prop_code = f"CP-{datetime.now().strftime('%y%m%d')}-{uuid.uuid4().hex[:4].upper()}"
+    objection_message = payload.comment or (
+        f"{current_user.department.replace('-', ' ').title()} raised an objection and selected "
+        f"{len(selected_projects)} project(s) for coordination."
+        if selected_projects else
+        f"{current_user.department.replace('-', ' ').title()} raised an objection."
+    )
+    db.execute(text("""
+        INSERT INTO coordination_proposals
+          (id, proposal_code, group_id, proposed_start, proposed_end, coordination_type, message, created_by)
+        VALUES (:id,:code,:group,:start,:end,'OBJECTION_COORDINATION',:message,:creator)
+    """), {
+        "id": prop_id, "code": prop_code, "group": gid,
+        "start": window[0], "end": window[1],
+        "message": objection_message, "creator": current_user.user_id,
+    })
+    db.execute(text("UPDATE coordination_groups SET status='PENDING', updated_at=now() WHERE id=:g"), {"g": gid})
+
+    # Requesting dept auto-accepts its own proposal
+    db.execute(text("""
+        INSERT INTO coordination_responses (id, proposal_id, department, response, message, responded_by)
+        VALUES (:id, :proposal, :department, 'ACCEPTED', 'Objection raised by this department.', :user)
+        ON CONFLICT (proposal_id, department) DO NOTHING
+    """), {
+        "id": str(uuid.uuid4()), "proposal": prop_id,
+        "department": current_user.department, "user": current_user.user_id,
+    })
+
+    # Notify the owning department
+    owner_dept = submitted.department_id or ""
+    dept_label = current_user.department.replace("-", " ").title()
+    notify_department(
+        db, owner_dept, "COORDINATION_PROPOSAL",
+        f"Objection raised by {dept_label}",
+        objection_message,
+        project_id=project_id, group_id=gid, proposal_id=prop_id, action_required=True,
+    )
+
+    audit(db, current_user.user_id, "COORDINATION_PROPOSAL_CREATED", "proposal", prop_id, {"group_id": gid})
+    for proj in all_projects:
+        audit(db, current_user.user_id, "COORDINATION_REQUESTED", "project", proj.project_id, {
+            "group_id": gid, "proposal_id": prop_id, "requesting_department": current_user.department,
+        })
+
+    db.commit()
+    return {"proposal_id": prop_id, "proposal_code": prop_code, "group_id": gid}
+
+
 @app.get("/projects/{project_id}")
 def get_project(
     project_id: str,
@@ -1382,6 +1630,11 @@ def update_project(
         invalidate_coordination_for_project(project, db, current_user.user_id)
     audit(db, current_user.user_id, "PROJECT_UPDATED", "project", project.project_id)
  
+    # Recompute coordination score for linked coordination groups
+    linked_groups = db.execute(text("SELECT group_id FROM coordination_group_projects WHERE project_id=:id"), {"id": str(project.project_id)}).scalars().all()
+    for gid in linked_groups:
+        _refresh_group_coordination_score(gid, db)
+
     db.commit()
     db.refresh(project)
     return serialize_project_with_coordination(project, db)
@@ -2140,12 +2393,20 @@ def _refresh_group_coordination_score(group_id, db):
     """Recompute coordination_score from live pairwise analysis and write it to the group."""
     projects = group_projects(db, group_id)
     if len(projects) < 2:
+        db.execute(text("UPDATE coordination_groups SET coordination_score=NULL, updated_at=now() WHERE id=:g"), {"g": str(group_id)})
+        return
+    depts = {p.department_id for p in projects}
+    if len(depts) < 2:
+        db.execute(text("UPDATE coordination_groups SET coordination_score=NULL, updated_at=now() WHERE id=:g"), {"g": str(group_id)})
         return
     pair_scores = []
     for i, left in enumerate(projects):
         for right in projects[i + 1:]:
-            pair_scores.append(coordination_pair_analysis(left, right, db)["coordination_score"]["score"])
-    score = round(sum(pair_scores) / len(pair_scores)) if pair_scores else 0
+            try:
+                pair_scores.append(coordination_pair_analysis(left, right, db)["coordination_score"]["score"])
+            except Exception:
+                pass
+    score = round(sum(pair_scores) / len(pair_scores)) if pair_scores else None
     db.execute(text("UPDATE coordination_groups SET coordination_score=:score, updated_at=now() WHERE id=:g"), {"score": score, "g": str(group_id)})
 
 def _auto_complete_group_if_done(group_id, db):

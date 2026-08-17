@@ -176,6 +176,119 @@ export function CoordinationProposalPage() {
   const userResponded = data.responses?.some((r: any) => r.department === user?.department);
   const groupStatus: string = data.group.status;
   const nocGroupActive = ["APPROVED", "CONFIRMED", "SCHEDULED", "COMPLETED"].includes(groupStatus);
+  const isObjectionCoordination = data.group.coordination_type === "OBJECTION_COORDINATION";
+
+  // Determine which project was submitted (triggering project) vs objecting dept's projects
+  const allProjects: Project[] = data.projects ?? [];
+
+  // For objection coordination: separate submitted project from coordinating dept projects
+  // The submitted project is the one that triggered the coordination (not owned by the objecting dept).
+  // We identify it by finding the project NOT belonging to the coordination requester's department.
+  // We use the coordination_responses to find who raised the objection (auto-accepted response).
+  const objectionResponse = isObjectionCoordination
+    ? data.responses?.find((r: any) => r.message === "Objection raised by this department." || r.response === "ACCEPTED")
+    : null;
+  const objectionDept: string | null = objectionResponse?.department ?? null;
+
+  const submittedProject: Project | null = isObjectionCoordination && objectionDept
+    ? allProjects.find((proj) => proj.department !== objectionDept) ?? null
+    : null;
+  const coordinatingProjects: Project[] = isObjectionCoordination && objectionDept
+    ? allProjects.filter((proj) => proj.department === objectionDept)
+    : [];
+
+  /** Render a project card for the "Participating projects" section */
+  function ProjectCard({ project }: { project: Project }) {
+    const noc = nocMap[project.project_id];
+    const ownerDept = project.department;
+    const isOwner = user?.department === ownerDept;
+    const myNocRecord = noc?.departments.find((d) => d.department === user?.department);
+    const myNocNotRequired = myNocRecord?.status === "NOT_REQUIRED";
+    const loading = nocLoading[project.project_id] ?? false;
+
+    return (
+      <article className="project-card">
+        <div className="project-body">
+          <h3>{project.project_name}</h3>
+          <p>
+            <strong>{project.department?.replaceAll("-", " ")}</strong>
+            {project.project_type && ` · ${project.project_type}`}
+          </p>
+          <p>{project.start_date} → {project.end_date}</p>
+          {(project as any).corridor_length_m && (
+            <p>Corridor: {((project as any).corridor_length_m as number).toFixed(0)} m</p>
+          )}
+          <div className="project-actions">
+            <button className="secondary-button" onClick={() => setDetailsProject(project)}>View details</button>
+          </div>
+          {/* NOC actions (only shown when group is in active NOC state) */}
+          {nocGroupActive && (
+            <div style={{ marginTop: "0.75rem" }}>
+              {isOwner && noc && (
+                <div className="noc-dept-list" style={{ marginTop: "0.5rem" }}>
+                  {noc.departments.map((dept) =>
+                    dept.status !== "NOT_REQUIRED" ? (
+                      <div key={dept.department} className="noc-dept-row">
+                        <span className="noc-dept-name">{dept.department.replaceAll("-", " ")}</span>
+                        {dept.status === "NOC_GIVEN"
+                          ? <span className="status-pill noc-given">No Objection ✓</span>
+                          : dept.status === "NOC_WITHDRAWN"
+                          ? <span className="status-pill noc-withdrawn">Withdrawn</span>
+                          : <span className="status-pill noc-pending">Pending</span>
+                        }
+                      </div>
+                    ) : null
+                  )}
+                </div>
+              )}
+              {!isOwner && !myNocNotRequired && (
+                <div className="noc-coord-actions">
+                  {myNocRecord?.status === "NOC_GIVEN" ? (
+                    <>
+                      <span className="status-pill noc-given">No Objection Given ✓</span>
+                      <button
+                        className="danger-button"
+                        onClick={() => void withdrawNoc(project.project_id)}
+                        disabled={loading}
+                      >
+                        {loading ? "Withdrawing…" : "Withdraw NOC"}
+                      </button>
+                    </>
+                  ) : myNocRecord?.status === "NOC_WITHDRAWN" ? (
+                    <>
+                      <span className="status-pill noc-withdrawn">NOC Withdrawn</span>
+                      <button
+                        className="primary-button"
+                        onClick={() => void giveNoc(project.project_id)}
+                        disabled={loading}
+                      >
+                        {loading ? "Submitting…" : "Give No Objection Again"}
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      className="primary-button"
+                      onClick={() => void giveNoc(project.project_id)}
+                      disabled={loading}
+                    >
+                      {loading ? "Submitting…" : "Give No Objection"}
+                    </button>
+                  )}
+                </div>
+              )}
+              {!isOwner && myNocNotRequired && (
+                <p style={{ color: "#64748b", fontSize: "13px", margin: 0 }}>NOC not required from your department for this project.</p>
+              )}
+              {!noc && (
+                <p style={{ color: "#94a3b8", fontSize: "13px", margin: 0 }}>Loading NOC status…</p>
+              )}
+            </div>
+          )}
+        </div>
+        <span className="status-pill">{project.status}</span>
+      </article>
+    );
+  }
 
   return (
     <main className="app-page">
@@ -191,10 +304,12 @@ export function CoordinationProposalPage() {
         </p>
         {error && <p className="form-error">{error}</p>}
         <div className="analysis-grid">
-          <article>
-            <small>Coordination score</small>
-            <strong>{data.group.coordination_score}/100</strong>
-          </article>
+          {data.group.coordination_score !== null && data.group.coordination_score !== undefined && (
+            <article>
+              <small>Coordination score</small>
+              <strong>{data.group.coordination_score}/100</strong>
+            </article>
+          )}
           <article>
             <small>Current status</small>
             <strong>{data.group.status.replaceAll("_", " ")}</strong>
@@ -204,124 +319,52 @@ export function CoordinationProposalPage() {
             <strong>{data.projects.length}</strong>
           </article>
         </div>
-        <h2 className="section-title">Participating projects</h2>
-        <div className="project-list">
-          {data.projects.map((project: Project) => (
-            <article className="project-card" key={project.project_id}>
-              <div className="project-body">
-                <h3>{project.project_name}</h3>
-                <p>
-                  {project.department} · {project.start_date} →{" "}
-                  {project.end_date}
+
+        {/* ── Participating Projects ── */}
+        {isObjectionCoordination && submittedProject ? (
+          <>
+            {/* Submitted project */}
+            <h2 className="section-title">Submitted Project</h2>
+            <p className="page-intro">The project that triggered the objection.</p>
+            <div className="project-list">
+              <ProjectCard project={submittedProject} />
+            </div>
+
+            {/* Objecting dept's projects */}
+            {coordinatingProjects.length > 0 && (
+              <>
+                <h2 className="section-title" style={{ marginTop: "1.5rem" }}>
+                  Objecting Department's Projects
+                </h2>
+                <p className="page-intro">
+                  Projects from {objectionDept?.replaceAll("-", " ")} selected for coordination.
                 </p>
-                <div className="project-actions"><button className="secondary-button" onClick={() => setDetailsProject(project)}>View details</button></div>
-              </div>
-              <span className="status-pill">{project.status}</span>
-            </article>
-          ))}
-        </div>
-
-        {/* ── NOC Section for accepted coordination group ── */}
-        {nocGroupActive && (
-          <section className="noc-panel" style={{ marginTop: "2rem" }}>
-            <h2 className="section-title">No Objection Certificates (NOC)</h2>
-            <p className="page-intro">
-              Coordination is separate from NOC. Each participating department must still give formal No Objection for projects they do not own.
-            </p>
-            {nocError && <p className="form-error">{nocError}</p>}
-            {data.projects.map((project: Project) => {
-              const noc = nocMap[project.project_id];
-              const ownerDept = project.department;
-              const isOwner = user?.department === ownerDept;
-              const myNocRecord = noc?.departments.find((d) => d.department === user?.department);
-              const myNocNotRequired = myNocRecord?.status === "NOT_REQUIRED";
-              const loading = nocLoading[project.project_id] ?? false;
-
-              return (
-                <div key={`noc-${project.project_id}`} style={{ marginBottom: "1.5rem", padding: "1rem 1.25rem", background: "var(--card-bg, #f8fafc)", border: "1px solid var(--border, #e2e8f0)", borderRadius: "10px" }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px", marginBottom: "0.75rem" }}>
-                    <div>
-                      <strong>{project.project_name}</strong>
-                      <span style={{ marginLeft: "8px", fontSize: "12px", color: "#64748b" }}>
-                        Owned by: {ownerDept?.replaceAll("-", " ")}
-                      </span>
-                    </div>
-                    {noc && (
-                      <span style={{ fontSize: "12px", color: "#475569" }}>
-                        NOC: {noc.given}/{noc.total} departments cleared
-                        {noc.all_cleared && <span className="status-pill noc-given" style={{ marginLeft: "8px" }}>All Cleared ✅</span>}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Owner view — NOC progress tracker */}
-                  {isOwner && noc && (
-                    <div className="noc-dept-list">
-                      {noc.departments.map((dept) =>
-                        dept.status !== "NOT_REQUIRED" ? (
-                          <div key={dept.department} className="noc-dept-row">
-                            <span className="noc-dept-name">{dept.department.replaceAll("-", " ")}</span>
-                            {dept.status === "NOC_GIVEN"
-                              ? <span className="status-pill noc-given">No Objection ✓</span>
-                              : dept.status === "NOC_WITHDRAWN"
-                              ? <span className="status-pill noc-withdrawn">Withdrawn</span>
-                              : <span className="status-pill noc-pending">Pending</span>
-                            }
-                          </div>
-                        ) : null
-                      )}
-                    </div>
-                  )}
-
-                  {/* Non-owner three-state NOC action */}
-                  {!isOwner && !myNocNotRequired && (
-                    <div className="noc-coord-actions">
-                      {myNocRecord?.status === "NOC_GIVEN" ? (
-                        <>
-                          <span className="status-pill noc-given">No Objection Given ✓</span>
-                          <button
-                            className="danger-button"
-                            onClick={() => void withdrawNoc(project.project_id)}
-                            disabled={loading}
-                          >
-                            {loading ? "Withdrawing…" : "Withdraw NOC"}
-                          </button>
-                        </>
-                      ) : myNocRecord?.status === "NOC_WITHDRAWN" ? (
-                        <>
-                          <span className="status-pill noc-withdrawn">NOC Withdrawn</span>
-                          <button
-                            className="primary-button"
-                            onClick={() => void giveNoc(project.project_id)}
-                            disabled={loading}
-                          >
-                            {loading ? "Submitting…" : "Give No Objection Again"}
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          className="primary-button"
-                          onClick={() => void giveNoc(project.project_id)}
-                          disabled={loading}
-                        >
-                          {loading ? "Submitting…" : "Give No Objection"}
-                        </button>
-                      )}
-                    </div>
-                  )}
-
-                  {!isOwner && myNocNotRequired && (
-                    <p style={{ color: "#64748b", fontSize: "13px", margin: 0 }}>NOC not required from your department for this project.</p>
-                  )}
-
-                  {!noc && (
-                    <p style={{ color: "#94a3b8", fontSize: "13px", margin: 0 }}>Loading NOC status…</p>
-                  )}
+                <div className="project-list">
+                  {coordinatingProjects.map((proj) => (
+                    <ProjectCard key={proj.project_id} project={proj} />
+                  ))}
                 </div>
-              );
-            })}
-          </section>
+              </>
+            )}
+
+            {coordinatingProjects.length === 0 && (
+              <p className="page-intro" style={{ color: "#94a3b8", fontStyle: "italic" }}>
+                No departmental projects were attached — this objection proceeds via discussion.
+              </p>
+            )}
+          </>
+        ) : (
+          <>
+            <h2 className="section-title">Participating projects</h2>
+            <div className="project-list">
+              {data.projects.map((project: Project) => (
+                <ProjectCard key={project.project_id} project={project} />
+              ))}
+            </div>
+          </>
         )}
+
+        {nocError && <p className="form-error">{nocError}</p>}
 
         {p.status === "PENDING" && !userResponded && (
           <div className="response-panel">
